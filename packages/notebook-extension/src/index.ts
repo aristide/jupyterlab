@@ -1390,11 +1390,11 @@ function activateCopyOutput(
     }
   });
 
-  app.contextMenu.addItem({
+  /*app.contextMenu.addItem({
     command: CommandIDs.copyToClipboard,
     selector: '.jp-OutputArea-child',
     rank: 0
-  });
+  }); */
 }
 
 /**
