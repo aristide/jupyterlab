@@ -1365,6 +1365,7 @@ function activateCopyOutput(
     savedRanges.forEach(r => sel.addRange(r));
   }
 
+  /*
   app.commands.addCommand(CommandIDs.copyToClipboard, {
     label: trans.__('Copy Output to Clipboard'),
     execute: args => {
@@ -1388,7 +1389,7 @@ function activateCopyOutput(
         copyElement(area as HTMLElement);
       }
     }
-  });
+  });*/
 
   /*app.contextMenu.addItem({
     command: CommandIDs.copyToClipboard,
