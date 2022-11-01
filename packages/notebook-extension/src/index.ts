@@ -1335,12 +1335,12 @@ function activateCopyOutput(
   translator: ITranslator,
   tracker: INotebookTracker
 ): void {
-  const trans = translator.load('jupyterlab');
+  //const trans = translator.load('jupyterlab');
 
   /**
    * Copy the contents of an HTMLElement to the system clipboard
    */
-  function copyElement(e: HTMLElement): void {
+  /*function copyElement(e: HTMLElement): void {
     const sel = window.getSelection();
 
     if (sel == null) {
@@ -1363,7 +1363,7 @@ function activateCopyOutput(
     // Restore the saved selection.
     sel.removeAllRanges();
     savedRanges.forEach(r => sel.addRange(r));
-  }
+  }*/
 
   /*
   app.commands.addCommand(CommandIDs.copyToClipboard, {

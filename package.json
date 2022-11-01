@@ -105,8 +105,11 @@
     "react": "^17.0.1"
   },
   "dependencies": {
+    "@jupyterlab/metapackage": "^4.0.0-alpha.15",
     "@typescript-eslint/eslint-plugin": "~5.28.0",
     "@typescript-eslint/parser": "~5.28.0",
+    "builder": "^5.0.0",
+    "canvas": "^2.10.2",
     "eslint": "~8.17.0",
     "eslint-config-prettier": "~8.5.0",
     "eslint-plugin-jest": "~26.5.3",

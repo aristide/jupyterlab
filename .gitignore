@@ -130,3 +130,6 @@ junit.xml
 
 # generated LSP interfaces
 packages/lsp/src/_*
+
+# virtualen
+.venv
