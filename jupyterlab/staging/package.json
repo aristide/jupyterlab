@@ -80,7 +80,7 @@
     "@jupyterlab/nbconvert-css": "~4.0.0-alpha.15",
     "@jupyterlab/nbformat": "~4.0.0-alpha.15",
     "@jupyterlab/notebook": "~4.0.0-alpha.15",
-    "@jupyterlab/notebook-extension": "file:./../../packages/notebook-extension",
+    "@jupyterlab/notebook-extension": "file:../../packages/notebook-extension",
     "@jupyterlab/observables": "~5.0.0-alpha.15",
     "@jupyterlab/outputarea": "~4.0.0-alpha.15",
     "@jupyterlab/pdf-extension": "~4.0.0-alpha.15",

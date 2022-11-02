@@ -1,7 +1,7 @@
 # Copyright (c) Jupyter Development Team.
 # Distributed under the terms of the Modified BSD License.
 
-FROM python:3
+FROM python:3.9
 
 WORKDIR /usr/src/app
 
@@ -14,6 +14,8 @@ WORKDIR /usr/src/app
 # RUN git config --global user.name "$GIT_AUTHOR_NAME"
 # RUN git config --global user.email "$GIT_AUTHOR_EMAIL"
 
-RUN apt-get update && apt-get install -y npm twine
+RUN apt-get update && apt-get install -y nodejs npm yarn twine
+
+EXPOSE 8888
 
 CMD ["bash"]
