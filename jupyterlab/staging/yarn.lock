@@ -1528,7 +1528,7 @@
   dependencies:
     "@lumino/coreutils" "^2.0.0-alpha.6"
 
-"@jupyterlab/notebook-extension@^4.0.0-alpha.15", "@jupyterlab/notebook-extension@file:../../packages/notebook-extension":
+"@jupyterlab/notebook-extension@^4.0.0-alpha.15", "@jupyterlab/notebook-extension@file:./../../packages/notebook-extension":
   version "4.0.0-alpha.15"
   dependencies:
     "@jupyterlab/application" "^4.0.0-alpha.15"
