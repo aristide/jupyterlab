@@ -17,6 +17,9 @@
     "sourceMap": true,
     "strictNullChecks": true,
     "target": "ES2018",
-    "types": ["jest", "node"]
+    "types": ["jest", "node"],
+    "paths": {
+      "@jupyterlab/notebook-extension/*": ["./packages/notebook-extension/*"]
+    }
   }
 }

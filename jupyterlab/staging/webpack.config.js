@@ -311,6 +311,11 @@ module.exports = [
     },
     devtool: 'inline-source-map',
     externals: ['node-fetch', 'ws'],
+    resolve: {
+      alias: {
+        '@jupyterlab/notebook-extension': path.resolve(__dirname, '../../packages/notebook-extension'),
+      },
+    },
     plugins
   })
 ].concat(extensionAssetConfig);
