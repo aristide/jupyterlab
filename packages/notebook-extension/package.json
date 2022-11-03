@@ -82,5 +82,5 @@
     "extension": true,
     "schemaDir": "schema"
   },
-  "styleModule": "./style/index.js"
+  "styleModule": "style/index.js"
 }
