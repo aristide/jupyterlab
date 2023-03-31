@@ -2,7 +2,7 @@
 // Distributed under the terms of the Modified BSD License.
 
 import { IObservableJSON } from '@jupyterlab/observables';
-import { ISharedText, SourceChange } from '@jupyterlab/shared-models';
+import { ISharedText, SourceChange } from '@jupyter/ydoc';
 import {
   ITranslator,
   nullTranslator,
@@ -74,14 +74,17 @@ export class JSONEditor extends Widget {
     this.node.appendChild(this.headerNode);
     this.node.appendChild(this.editorHostNode);
 
-    const model = new CodeEditor.Model();
-
-    model.mimeType = 'application/json';
+    const model = new CodeEditor.Model({ mimeType: 'application/json' });
     model.sharedModel.changed.connect(this._onModelChanged, this);
 
     this.model = model;
-    this.editor = options.editorFactory({ host: this.editorHostNode, model });
-    this.editor.setOption('readOnly', true);
+    this.editor = options.editorFactory({
+      host: this.editorHostNode,
+      model,
+      config: {
+        readOnly: true
+      }
+    });
   }
 
   /**
@@ -150,8 +153,7 @@ export class JSONEditor extends Widget {
       return;
     }
 
-    // The model does not dispose the shared model by default
-    this.model.sharedModel.dispose();
+    this.source?.dispose();
     this.model.dispose();
     this.editor.dispose();
 

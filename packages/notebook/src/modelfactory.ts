@@ -1,6 +1,7 @@
 // Copyright (c) Jupyter Development Team.
 // Distributed under the terms of the Modified BSD License.
 
+import type { ISharedNotebook } from '@jupyter/ydoc';
 import { DocumentRegistry } from '@jupyterlab/docregistry';
 import { Contents } from '@jupyterlab/services';
 import { INotebookModel, NotebookModel } from './model';
@@ -14,14 +15,21 @@ export class NotebookModelFactory
   /**
    * Construct a new notebook model factory.
    */
-  constructor(options: NotebookModelFactory.IOptions) {
+  constructor(options: NotebookModelFactory.IOptions = {}) {
     this._disableDocumentWideUndoRedo =
-      options.disableDocumentWideUndoRedo || false;
+      options.disableDocumentWideUndoRedo ?? true;
+    this._collaborative = options.collaborative ?? true;
   }
 
   /**
    * Define the disableDocumentWideUndoRedo property.
+   *
+   * @experimental
+   * @alpha
    */
+  get disableDocumentWideUndoRedo(): boolean {
+    return this._disableDocumentWideUndoRedo;
+  }
   set disableDocumentWideUndoRedo(disableDocumentWideUndoRedo: boolean) {
     this._disableDocumentWideUndoRedo = disableDocumentWideUndoRedo;
   }
@@ -48,6 +56,13 @@ export class NotebookModelFactory
   }
 
   /**
+   * Whether the model is collaborative or not.
+   */
+  get collaborative(): boolean {
+    return this._collaborative;
+  }
+
+  /**
    * Get whether the model factory has been disposed.
    */
   get isDisposed(): boolean {
@@ -68,9 +83,13 @@ export class NotebookModelFactory
    *
    * @returns A new document model.
    */
-  createNew(languagePreference?: string): INotebookModel {
+  createNew(
+    options: DocumentRegistry.IModelOptions<ISharedNotebook> = {}
+  ): INotebookModel {
     return new NotebookModel({
-      languagePreference,
+      languagePreference: options.languagePreference,
+      sharedModel: options.sharedModel,
+      collaborationEnabled: options.collaborationEnabled && this.collaborative,
       disableDocumentWideUndoRedo: this._disableDocumentWideUndoRedo
     });
   }
@@ -87,6 +106,7 @@ export class NotebookModelFactory
    */
   private _disableDocumentWideUndoRedo: boolean;
   private _disposed = false;
+  private _collaborative: boolean;
 }
 
 /**
@@ -98,7 +118,17 @@ export namespace NotebookModelFactory {
    */
   export interface IOptions {
     /**
+     * Whether the model is collaborative or not.
+     */
+    collaborative?: boolean;
+
+    /**
      * Defines if the document can be undo/redo.
+     *
+     * Default: true
+     *
+     * @experimental
+     * @alpha
      */
     disableDocumentWideUndoRedo?: boolean;
   }

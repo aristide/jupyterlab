@@ -1,6 +1,6 @@
 {
   "name": "@jupyterlab/apputils-extension",
-  "version": "4.0.0-alpha.15",
+  "version": "4.0.0-beta.0",
   "description": "JupyterLab - Application Utilities Extension",
   "homepage": "https://github.com/jupyterlab/jupyterlab",
   "bugs": {
@@ -28,7 +28,8 @@
     "style/*.css",
     "style/images/*.svg",
     "schema/*.json",
-    "style/index.js"
+    "style/index.js",
+    "src/**/*.{ts,tsx}"
   ],
   "scripts": {
     "build": "tsc -b",
@@ -37,35 +38,33 @@
     "watch": "tsc -b --watch"
   },
   "dependencies": {
-    "@jupyterlab/application": "^4.0.0-alpha.15",
-    "@jupyterlab/apputils": "^4.0.0-alpha.15",
-    "@jupyterlab/coreutils": "^6.0.0-alpha.15",
-    "@jupyterlab/docregistry": "^4.0.0-alpha.15",
-    "@jupyterlab/filebrowser": "^4.0.0-alpha.15",
-    "@jupyterlab/mainmenu": "^4.0.0-alpha.15",
-    "@jupyterlab/rendermime": "^4.0.0-alpha.15",
-    "@jupyterlab/services": "^7.0.0-alpha.15",
-    "@jupyterlab/settingregistry": "^4.0.0-alpha.15",
-    "@jupyterlab/statedb": "^4.0.0-alpha.15",
-    "@jupyterlab/statusbar": "^4.0.0-alpha.15",
-    "@jupyterlab/translation": "^4.0.0-alpha.15",
-    "@jupyterlab/ui-components": "^4.0.0-alpha.30",
-    "@lumino/algorithm": "^2.0.0-alpha.6",
-    "@lumino/commands": "^2.0.0-alpha.6",
-    "@lumino/coreutils": "^2.0.0-alpha.6",
-    "@lumino/disposable": "^2.0.0-alpha.6",
-    "@lumino/polling": "^2.0.0-alpha.6",
-    "@lumino/widgets": "^2.0.0-alpha.6",
-    "lodash.memoize": "^4.1.2",
-    "react": "^17.0.1",
-    "react-dom": "^17.0.1",
+    "@jupyterlab/application": "^4.0.0-beta.0",
+    "@jupyterlab/apputils": "^4.0.0-beta.0",
+    "@jupyterlab/coreutils": "^6.0.0-beta.0",
+    "@jupyterlab/docregistry": "^4.0.0-beta.0",
+    "@jupyterlab/filebrowser": "^4.0.0-beta.0",
+    "@jupyterlab/mainmenu": "^4.0.0-beta.0",
+    "@jupyterlab/rendermime-interfaces": "^3.8.0-beta.0",
+    "@jupyterlab/services": "^7.0.0-beta.0",
+    "@jupyterlab/settingregistry": "^4.0.0-beta.0",
+    "@jupyterlab/statedb": "^4.0.0-beta.0",
+    "@jupyterlab/statusbar": "^4.0.0-beta.0",
+    "@jupyterlab/translation": "^4.0.0-beta.0",
+    "@jupyterlab/ui-components": "^4.0.0-beta.0",
+    "@lumino/algorithm": "^2.0.0",
+    "@lumino/commands": "^2.0.0",
+    "@lumino/coreutils": "^2.0.0",
+    "@lumino/disposable": "^2.0.0",
+    "@lumino/polling": "^2.0.0",
+    "@lumino/widgets": "^2.0.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
     "react-toastify": "^9.0.8"
   },
   "devDependencies": {
-    "@types/lodash.memoize": "^4.1.7",
     "rimraf": "~3.0.0",
-    "typedoc": "~0.22.10",
-    "typescript": "~4.7.3"
+    "typedoc": "~0.23.25",
+    "typescript": "~5.0.2"
   },
   "publishConfig": {
     "access": "public"

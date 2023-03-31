@@ -24,6 +24,10 @@ module.exports = {
     'plugin:react/recommended'
   ],
   parser: '@typescript-eslint/parser',
+  parserOptions: {
+    ecmaVersion: 'ES2018',
+    project: ['./tsconfig.eslint.json']
+  },
   plugins: ['@typescript-eslint'],
   overrides: [
     {
@@ -82,6 +86,7 @@ module.exports = {
           'blocked_extensions_uris',
           'bundles_extension',
           'cell_type',
+          'check_update',
           'clear_output',
           'codemirror_mode',
           'comm_close',
@@ -107,6 +112,7 @@ module.exports = {
           'file_extension',
           'help_links',
           'hist_access_type',
+          'ids_only',
           'implementation_version',
           'installed_version',
           'is_allowed',

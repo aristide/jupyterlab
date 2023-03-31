@@ -44,12 +44,15 @@
   --jp-icon-duplicate: url('icons/toolbar/duplicate.svg');
   --jp-icon-edit: url('icons/toolbar/edit.svg');
   --jp-icon-ellipses: url('icons/toolbar/ellipses.svg');
+  --jp-icon-error: url('icons/error.svg');
   --jp-icon-expand-all: url('icons/toolbar/expand-all.svg');
   --jp-icon-extension: url('icons/sidebar/extension.svg');
   --jp-icon-fast-forward: url('icons/toolbar/fast-forward.svg');
   --jp-icon-file-upload: url('icons/toolbar/file-upload.svg');
   --jp-icon-file: url('icons/filetype/file.svg');
+  --jp-icon-filter-dot: url('icons/search/filter-dot.svg');
   --jp-icon-filter-list: url('icons/toolbar/filter-list.svg');
+  --jp-icon-filter: url('icons/search/filter.svg');
   --jp-icon-folder-favorite: url('icons/filetype/folder-favorite.svg');
   --jp-icon-folder: url('icons/filetype/folder.svg');
   --jp-icon-home: url('icons/filetype/home.svg');
@@ -106,6 +109,7 @@
   --jp-icon-user: url('icons/sidebar/user.svg');
   --jp-icon-users: url('icons/sidebar/users.svg');
   --jp-icon-vega: url('icons/filetype/vega.svg');
+  --jp-icon-word: url('icons/search/word.svg');
   --jp-icon-yaml: url('icons/filetype/yaml.svg');
 }
 
@@ -239,6 +243,10 @@
   background-image: var(--jp-icon-ellipses);
 }
 
+.jp-ErrorIcon {
+  background-image: var(--jp-icon-error);
+}
+
 .jp-ExpandAllIcon {
   background-image: var(--jp-icon-expand-all);
 }
@@ -257,6 +265,14 @@
 
 .jp-FileUploadIcon {
   background-image: var(--jp-icon-file-upload);
+}
+
+.jp-FilterDotIcon {
+  background-image: var(--jp-icon-filter-dot);
+}
+
+.jp-FilterIcon {
+  background-image: var(--jp-icon-filter);
 }
 
 .jp-FilterListIcon {
@@ -485,6 +501,10 @@
 
 .jp-VegaIcon {
   background-image: var(--jp-icon-vega);
+}
+
+.jp-WordIcon {
+  background-image: var(--jp-icon-word);
 }
 
 .jp-YamlIcon {

@@ -12,19 +12,16 @@ import {
   RawCell
 } from '@jupyterlab/cells';
 import { CodeEditor, IEditorMimeTypeService } from '@jupyterlab/codeeditor';
-import { IChangedArgs, PageConfig } from '@jupyterlab/coreutils';
+import { IChangedArgs } from '@jupyterlab/coreutils';
 import * as nbformat from '@jupyterlab/nbformat';
-import { IObservableMap } from '@jupyterlab/observables';
+import { IObservableList } from '@jupyterlab/observables';
 import { IRenderMimeRegistry } from '@jupyterlab/rendermime';
-import type {
-  ISharedNotebook,
-  NotebookChange
-} from '@jupyterlab/shared-models';
+import type { IMapChange } from '@jupyter/ydoc';
 import { TableOfContentsUtils } from '@jupyterlab/toc';
 import { ITranslator, nullTranslator } from '@jupyterlab/translation';
 import { WindowedList } from '@jupyterlab/ui-components';
 import { ArrayExt, findIndex } from '@lumino/algorithm';
-import { MimeData, ReadonlyPartialJSONValue } from '@lumino/coreutils';
+import { MimeData } from '@lumino/coreutils';
 import { ElementExt } from '@lumino/domutils';
 import { Drag } from '@lumino/dragdrop';
 import { Message } from '@lumino/messaging';
@@ -33,6 +30,7 @@ import { ISignal, Signal } from '@lumino/signaling';
 import { h, VirtualDOM } from '@lumino/virtualdom';
 import { PanelLayout, Widget } from '@lumino/widgets';
 import { NotebookActions } from './actions';
+import { CellList } from './celllist';
 import { DROP_SOURCE_CLASS, DROP_TARGET_CLASS } from './constants';
 import { INotebookModel } from './model';
 import { NotebookViewModel, NotebookWindowedLayout } from './windowing';
@@ -135,11 +133,6 @@ const DRAG_THRESHOLD = 5;
 const MAXIMUM_TIME_REMAINING = 50;
 
 /*
- * The type of cell insert provided via signal.
- */
-type InsertType = 'push' | 'insert' | 'set';
-
-/*
  * The rendering mode for the notebook.
  */
 type RenderingLayout = 'default' | 'side-by-side';
@@ -226,8 +219,7 @@ export class StaticNotebook extends WindowedList {
     this.node.dataset[CODE_RUNNER] = 'true';
     this.rendermime = options.rendermime;
     this.translator = options.translator || nullTranslator;
-    this.contentFactory =
-      options.contentFactory || StaticNotebook.defaultContentFactory;
+    this.contentFactory = options.contentFactory;
     this.editorConfig =
       options.editorConfig || StaticNotebook.defaultEditorConfig;
     this.notebookConfig =
@@ -369,7 +361,7 @@ export class StaticNotebook extends WindowedList {
   }
 
   /**
-   * Move a cell preserving widget view state.
+   * Move cells preserving widget view state.
    *
    * #### Notes
    * This is required because at the model level a move is a deletion
@@ -377,27 +369,40 @@ export class StaticNotebook extends WindowedList {
    *
    * @param from The index of the cell to move
    * @param to The new index of the cell
+   * @param n Number of cells to move
    */
-  moveCell(from: number, to: number): void {
+  moveCell(from: number, to: number, n = 1): void {
     if (!this.model) {
       return;
     }
 
-    const oldCell = this.widgets[from];
-    const viewModel: { [k: string]: any } = {};
-    if (oldCell.model.type === 'markdown') {
-      for (const k of ['rendered', 'headingCollapsed']) {
-        // @ts-expect-error Cell has no index signature
-        viewModel[k] = oldCell[k];
+    const boundedTo = Math.min(this.model.cells.length - 1, Math.max(0, to));
+
+    if (boundedTo === from) {
+      return;
+    }
+
+    const viewModel: { [k: string]: any }[] = new Array(n);
+    for (let i = 0; i < n; i++) {
+      viewModel[i] = {};
+      const oldCell = this.widgets[from + i];
+      if (oldCell.model.type === 'markdown') {
+        for (const k of ['rendered', 'headingCollapsed']) {
+          // @ts-expect-error Cell has no index signature
+          viewModel[i][k] = oldCell[k];
+        }
       }
     }
 
-    this.model.sharedModel.moveCell(from, to);
+    this.model!.sharedModel.moveCells(from, boundedTo, n);
 
-    const newCell = this.widgets[to];
-    for (const state in viewModel) {
-      // @ts-expect-error Cell has no index signature
-      newCell[state] = viewModel[state];
+    for (let i = 0; i < n; i++) {
+      const newCell = this.widgets[to + i];
+      const view = viewModel[i];
+      for (const state in view) {
+        // @ts-expect-error Cell has no index signature
+        newCell[state] = view[state];
+      }
     }
   }
 
@@ -476,10 +481,7 @@ export class StaticNotebook extends WindowedList {
    * The default implementation updates the mimetypes of the code cells
    * when the `language_info` metadata changes.
    */
-  protected onMetadataChanged(
-    sender: IObservableMap<ReadonlyPartialJSONValue | undefined>,
-    args: IObservableMap.IChangedArgs<ReadonlyPartialJSONValue>
-  ): void {
+  protected onMetadataChanged(sender: INotebookModel, args: IMapChange): void {
     switch (args.key) {
       case 'language_info':
         this._updateMimetype();
@@ -495,15 +497,6 @@ export class StaticNotebook extends WindowedList {
    * The default implementation is a no-op
    */
   protected onCellInserted(index: number, cell: Cell): void {
-    // This is a no-op.
-  }
-
-  /**
-   * Handle a cell being moved.
-   *
-   * The default implementation is a no-op
-   */
-  protected onCellMoved(fromIndex: number, toIndex: number): void {
     // This is a no-op.
   }
 
@@ -538,11 +531,9 @@ export class StaticNotebook extends WindowedList {
     newValue: INotebookModel | null
   ): void {
     if (oldValue) {
-      oldValue.sharedModel.changed.disconnect(this._onCellsChanged, this);
-      oldValue.metadata.changed.disconnect(this.onMetadataChanged, this);
       oldValue.contentChanged.disconnect(this.onModelContentChanged, this);
-      // TODO: reuse existing cell widgets if possible. Remember to initially
-      // clear the history of each cell if we do this.
+      oldValue.metadataChanged.disconnect(this.onMetadataChanged, this);
+      oldValue.cells.changed.disconnect(this._onCellsChanged, this);
       while (this.cellsArray.length) {
         this._removeCell(0);
       }
@@ -553,8 +544,7 @@ export class StaticNotebook extends WindowedList {
     }
     this._updateMimetype();
     const cells = newValue.cells;
-    const collab =
-      (PageConfig.getOption('collaborative') ?? '').toLowerCase() === 'true';
+    const collab = newValue.collaborative ?? false;
     if (!collab && !cells.length) {
       newValue.sharedModel.insertCell(0, {
         cell_type: this.notebookConfig.defaultCell
@@ -562,58 +552,64 @@ export class StaticNotebook extends WindowedList {
     }
     let index = -1;
     for (const cell of cells) {
-      this._insertCell(++index, cell, 'set');
+      this._insertCell(++index, cell);
     }
-    newValue.sharedModel.changed.connect(this._onCellsChanged, this);
+    newValue.cells.changed.connect(this._onCellsChanged, this);
+    newValue.metadataChanged.connect(this.onMetadataChanged, this);
     newValue.contentChanged.connect(this.onModelContentChanged, this);
-    newValue.metadata.changed.connect(this.onMetadataChanged, this);
   }
 
   /**
    * Handle a change cells event.
    */
   protected _onCellsChanged(
-    sender: ISharedNotebook,
-    args: NotebookChange
+    sender: CellList,
+    args: IObservableList.IChangedArgs<ICellModel>
   ): void {
-    if (args.cellsChange) {
-      this.removeHeader();
-
-      let index = 0;
-      args.cellsChange.forEach(delta => {
-        if (delta.retain != null) {
-          index += delta.retain;
-        } else if (delta.insert) {
-          const insertType: InsertType =
-            index === this.widgets.length ? 'push' : 'insert';
-          delta.insert.forEach((val, offset) => {
-            this._insertCell(
-              index + offset,
-              this.model!.cells.get(index + offset),
-              insertType
-            );
-          });
-          this._updateDataWindowedListIndex(
-            index,
-            this.model!.cells.length,
-            delta.insert.length
-          );
-          index += delta.insert.length;
-        } else if (delta.delete != null) {
-          for (let i = 0; i < delta.delete; i++) {
-            this._removeCell(index);
-          }
-          this._updateDataWindowedListIndex(
-            index,
-            this.model!.cells.length + delta.delete,
-            -1 * delta.delete
-          );
+    this.removeHeader();
+    switch (args.type) {
+      case 'add': {
+        let index = 0;
+        index = args.newIndex;
+        for (const value of args.newValues) {
+          this._insertCell(index++, value);
         }
-      });
-
-      if (!this.model!.sharedModel.cells.length) {
-        this.addHeader();
+        this._updateDataWindowedListIndex(
+          args.newIndex,
+          this.model!.cells.length,
+          args.newValues.length
+        );
+        break;
       }
+      case 'remove':
+        for (let length = args.oldValues.length; length > 0; length--) {
+          this._removeCell(args.oldIndex);
+        }
+        this._updateDataWindowedListIndex(
+          args.oldIndex,
+          this.model!.cells.length + args.oldValues.length,
+          -1 * args.oldValues.length
+        );
+        // Add default cell if there are no cells remaining.
+        if (!sender.length) {
+          const model = this.model;
+          // Add the cell in a new context to avoid triggering another
+          // cell changed event during the handling of this signal.
+          requestAnimationFrame(() => {
+            if (model && !model.isDisposed && !model.sharedModel.cells.length) {
+              model.sharedModel.insertCell(0, {
+                cell_type: this.notebookConfig.defaultCell
+              });
+            }
+          });
+        }
+        break;
+      default:
+        return;
+    }
+
+    if (!this.model!.sharedModel.cells.length) {
+      this.addHeader();
     }
 
     this.update();
@@ -622,11 +618,7 @@ export class StaticNotebook extends WindowedList {
   /**
    * Create a cell widget and insert into the notebook.
    */
-  private _insertCell(
-    index: number,
-    cell: ICellModel,
-    insertType: InsertType
-  ): void {
+  private _insertCell(index: number, cell: ICellModel): void {
     let widget: Cell;
     switch (cell.type) {
       case 'code':
@@ -661,6 +653,7 @@ export class StaticNotebook extends WindowedList {
     const options: CodeCell.IOptions = {
       contentFactory,
       editorConfig,
+      inputHistoryScope: this.notebookConfig.inputHistoryScope,
       maxNumberOutputs: this.notebookConfig.maxNumberOutputs,
       model,
       placeholder: this._notebookConfig.windowingMode !== 'none',
@@ -736,9 +729,7 @@ export class StaticNotebook extends WindowedList {
    * Update the mimetype of the notebook.
    */
   private _updateMimetype(): void {
-    const info = this._notebookModel?.metadata.get(
-      'language_info'
-    ) as nbformat.ILanguageInfoMetadata;
+    const info = this._notebookModel?.getMetadata('language_info');
     if (!info) {
       return;
     }
@@ -842,7 +833,7 @@ export class StaticNotebook extends WindowedList {
   private _updateEditorConfig() {
     for (let i = 0; i < this.widgets.length; i++) {
       const cell = this.widgets[i];
-      let config: Partial<CodeEditor.IConfig> = {};
+      let config: Record<string, any> = {};
       switch (cell.model.type) {
         case 'code':
           config = this._editorConfig.code;
@@ -854,7 +845,7 @@ export class StaticNotebook extends WindowedList {
           config = this._editorConfig.raw;
           break;
       }
-      cell.setEditorConfig({ ...config });
+      cell.updateEditorConfig({ ...config });
     }
   }
 
@@ -953,7 +944,7 @@ export namespace StaticNotebook {
     /**
      * A factory for creating content.
      */
-    contentFactory?: IContentFactory;
+    contentFactory: IContentFactory;
 
     /**
      * A configuration object for the cell editor settings.
@@ -1008,15 +999,15 @@ export namespace StaticNotebook {
     /**
      * Config options for code cells.
      */
-    readonly code: Partial<CodeEditor.IConfig>;
+    readonly code: Record<string, any>;
     /**
      * Config options for markdown cells.
      */
-    readonly markdown: Partial<CodeEditor.IConfig>;
+    readonly markdown: Record<string, any>;
     /**
      * Config options for raw cells.
      */
-    readonly raw: Partial<CodeEditor.IConfig>;
+    readonly raw: Record<string, any>;
   }
 
   /**
@@ -1024,22 +1015,19 @@ export namespace StaticNotebook {
    */
   export const defaultEditorConfig: IEditorConfig = {
     code: {
-      ...CodeEditor.defaultConfig,
-      lineWrap: 'off',
-      matchBrackets: true,
-      autoClosingBrackets: false
+      lineNumbers: false,
+      lineWrap: false,
+      matchBrackets: true
     },
     markdown: {
-      ...CodeEditor.defaultConfig,
-      lineWrap: 'on',
-      matchBrackets: false,
-      autoClosingBrackets: false
+      lineNumbers: false,
+      lineWrap: true,
+      matchBrackets: false
     },
     raw: {
-      ...CodeEditor.defaultConfig,
-      lineWrap: 'on',
-      matchBrackets: false,
-      autoClosingBrackets: false
+      lineNumbers: false,
+      lineWrap: true,
+      matchBrackets: false
     }
   };
 
@@ -1061,6 +1049,11 @@ export namespace StaticNotebook {
      * Defines the maximum number of outputs per cell.
      */
     maxNumberOutputs: number;
+
+    /**
+     * Whether to split stdin line history by kernel session or keep globally accessible.
+     */
+    inputHistoryScope: 'global' | 'session';
 
     /**
      * Number of cells to render in addition to those
@@ -1132,9 +1125,10 @@ export namespace StaticNotebook {
     scrollPastEnd: true,
     defaultCell: 'code',
     recordTiming: false,
+    inputHistoryScope: 'global',
     maxNumberOutputs: 50,
     showEditorForReadOnlyMarkdown: true,
-    disableDocumentWideUndoRedo: false,
+    disableDocumentWideUndoRedo: true,
     renderingLayout: 'default',
     sideBySideLeftMarginOverride: '10px',
     sideBySideRightMarginOverride: '10px',
@@ -1158,9 +1152,6 @@ export namespace StaticNotebook {
      * notebook content factory is used.
      */
     createCodeCell(options: CodeCell.IOptions): CodeCell {
-      if (!options.contentFactory) {
-        options.contentFactory = this;
-      }
       return new CodeCell(options).initializeState();
     }
 
@@ -1172,9 +1163,6 @@ export namespace StaticNotebook {
      * notebook content factory is used.
      */
     createMarkdownCell(options: MarkdownCell.IOptions): MarkdownCell {
-      if (!options.contentFactory) {
-        options.contentFactory = this;
-      }
       return new MarkdownCell(options).initializeState();
     }
 
@@ -1186,9 +1174,6 @@ export namespace StaticNotebook {
      * notebook content factory is used.
      */
     createRawCell(options: RawCell.IOptions): RawCell {
-      if (!options.contentFactory) {
-        options.contentFactory = this;
-      }
       return new RawCell(options).initializeState();
     }
   }
@@ -1202,11 +1187,6 @@ export namespace StaticNotebook {
      */
     export interface IOptions extends Cell.ContentFactory.IOptions {}
   }
-
-  /**
-   * Default content factory for the static notebook widget.
-   */
-  export const defaultContentFactory: IContentFactory = new ContentFactory();
 }
 
 /**
@@ -1217,20 +1197,29 @@ export class Notebook extends StaticNotebook {
    * Construct a notebook widget.
    */
   constructor(options: Notebook.IOptions) {
-    super(Private.processNotebookOptions(options));
+    super(options);
     this.node.tabIndex = 0; // Allow the widget to take focus.
     // Allow the node to scroll while dragging items.
     this.node.setAttribute('data-lm-dragscroll', 'true');
+    this.activeCellChanged.connect(this._updateSelectedCells, this);
+    this.selectionChanged.connect(this._updateSelectedCells, this);
+  }
+
+  /**
+   * List of selected and active cells
+   */
+  get selectedCells(): Cell[] {
+    return this._selectedCells;
   }
 
   /**
    * Handle a change cells event.
    */
   protected _onCellsChanged(
-    sender: ISharedNotebook,
-    args: NotebookChange
+    sender: CellList,
+    args: IObservableList.IChangedArgs<ICellModel>
   ): void {
-    const activeCellId = args.cellsChange && this.activeCell?.model.id;
+    const activeCellId = this.activeCell?.model.id;
     super._onCellsChanged(sender, args);
     if (activeCellId) {
       const newActiveCellIndex = this.model?.sharedModel.cells.findIndex(
@@ -1328,12 +1317,17 @@ export class Notebook extends StaticNotebook {
 
     this._activeCellIndex = newValue;
     const cell = this.widgets[newValue] ?? null;
-    if (cell !== this._activeCell) {
+    const cellChanged = cell !== this._activeCell;
+    if (cellChanged) {
       // Post an update request.
       this.update();
       this._activeCell = cell;
+    }
+
+    if (cellChanged || newValue != oldValue) {
       this._activeCellChanged.emit(cell);
     }
+
     if (this.mode === 'edit' && cell instanceof MarkdownCell) {
       cell.rendered = false;
     }
@@ -1371,6 +1365,47 @@ export class Notebook extends StaticNotebook {
     }
     this._activeCell = null;
     super.dispose();
+  }
+
+  /**
+   * Move cells preserving widget view state.
+   *
+   * #### Notes
+   * This is required because at the model level a move is a deletion
+   * followed by an insertion. Hence the view state is not preserved.
+   *
+   * @param from The index of the cell to move
+   * @param to The new index of the cell
+   * @param n Number of cells to move
+   */
+  moveCell(from: number, to: number, n = 1): void {
+    // Save active cell id to be restored
+    const newActiveCellIndex =
+      from <= this.activeCellIndex && this.activeCellIndex < from + n
+        ? this.activeCellIndex + to - from - (from > to ? 0 : n - 1)
+        : -1;
+    const isSelected = this.widgets
+      .slice(from, from + n)
+      .map(w => this.isSelected(w));
+
+    super.moveCell(from, to, n);
+
+    if (newActiveCellIndex >= 0) {
+      this.activeCellIndex = newActiveCellIndex;
+    }
+    if (from > to) {
+      isSelected.forEach((selected, idx) => {
+        if (selected) {
+          this.select(this.widgets[to + idx]);
+        }
+      });
+    } else {
+      isSelected.forEach((selected, idx) => {
+        if (selected) {
+          this.select(this.widgets[to - n + 1 + idx]);
+        }
+      });
+    }
   }
 
   /**
@@ -1589,11 +1624,18 @@ export class Notebook extends StaticNotebook {
    * Scroll so that the given cell is in view. Selects and activates cell.
    *
    * @param cell - A cell in the notebook widget.
+   * @param align - Type of alignment.
    *
    */
-  async scrollToCell(cell: Cell): Promise<void> {
+  async scrollToCell(
+    cell: Cell,
+    align: WindowedList.ScrollToAlign = 'auto'
+  ): Promise<void> {
     try {
-      await this.scrollToItem(this.widgets.findIndex(c => c === cell));
+      await this.scrollToItem(
+        this.widgets.findIndex(c => c === cell),
+        align
+      );
     } catch (r) {
       //no-op
     }
@@ -1603,72 +1645,78 @@ export class Notebook extends StaticNotebook {
     cell.activate();
   }
 
-  /**
-   * Set URI fragment identifier.
-   */
-  async setFragment(fragment: string): Promise<void> {
-    // Loop on cells, get headings and search for first matching id.
-    const cleanedFragment = CSS.escape(fragment.slice(1));
+  private _parseFragment(fragment: string): Private.IFragmentData | undefined {
+    const cleanedFragment = fragment.slice(1);
 
     if (!cleanedFragment) {
       // Bail early
       return;
     }
 
-    let found = false;
-    for (let cellIdx = 0; cellIdx < this.widgets.length; cellIdx++) {
-      const cell = this.widgets[cellIdx];
-      if (
-        cell.model.type === 'raw' ||
-        (cell.model.type === 'markdown' && !(cell as MarkdownCell).rendered)
-      ) {
-        // Bail early
-        continue;
-      }
-      for (const heading of cell.headings) {
-        let id: string | undefined | null = '';
-        switch (heading.type) {
-          case Cell.HeadingType.HTML:
-            id = (heading as TableOfContentsUtils.IHTMLHeading).id;
-            break;
-          case Cell.HeadingType.Markdown:
-            {
-              const mdHeading =
-                heading as any as TableOfContentsUtils.Markdown.IMarkdownHeading;
-              id = await TableOfContentsUtils.Markdown.getHeadingId(
-                this.rendermime.markdownParser!,
-                mdHeading.raw,
-                mdHeading.level
-              );
-            }
-            break;
-        }
-        if (id === cleanedFragment) {
-          found = true;
-          if (!cell.inViewport) {
-            await this.scrollToItem(cellIdx, 'center');
-          }
+    const parts = cleanedFragment.split('=');
+    if (parts.length === 1) {
+      // Default to heading if no prefix is given.
+      return {
+        kind: 'heading',
+        value: cleanedFragment
+      };
+    }
+    return {
+      kind: parts[0] as any,
+      value: parts.slice(1).join('=')
+    };
+  }
 
-          const el = this.node.querySelector(
-            `h${heading.level}[id="${id}"]`
-          ) as HTMLElement;
-          const widgetBox = this.node.getBoundingClientRect();
-          const elementBox = el.getBoundingClientRect();
+  /**
+   * Set URI fragment identifier.
+   */
+  async setFragment(fragment: string): Promise<void> {
+    const parsedFragment = this._parseFragment(fragment);
 
-          if (
-            elementBox.top > widgetBox.bottom ||
-            elementBox.bottom < widgetBox.top
-          ) {
-            el.scrollIntoView({ block: 'center' });
-          }
+    if (!parsedFragment) {
+      // Bail early
+      return;
+    }
 
-          break;
-        }
-      }
+    let result;
 
-      if (found) {
+    switch (parsedFragment.kind) {
+      case 'heading':
+        result = await this._findHeading(parsedFragment.value);
         break;
-      }
+      case 'cell-id':
+        result = this._findCellById(parsedFragment.value);
+        break;
+      default:
+        console.warn(
+          `Unknown target type for URI fragment ${fragment}, interpreting as a heading`
+        );
+        result = await this._findHeading(
+          parsedFragment.kind + '=' + parsedFragment.value
+        );
+        break;
+    }
+
+    if (result == null) {
+      return;
+    }
+    let { cell, element } = result;
+
+    if (!cell.inViewport) {
+      await this.scrollToCell(cell, 'center');
+    }
+
+    if (element == null) {
+      element = cell.node;
+    }
+    const widgetBox = this.node.getBoundingClientRect();
+    const elementBox = element.getBoundingClientRect();
+
+    if (
+      elementBox.top > widgetBox.bottom ||
+      elementBox.bottom < widgetBox.top
+    ) {
+      element.scrollIntoView({ block: 'center' });
     }
   }
 
@@ -1697,7 +1745,10 @@ export class Notebook extends StaticNotebook {
         if (event.eventPhase === Event.CAPTURING_PHASE) {
           this._evtMouseDownCapture(event as MouseEvent);
         } else {
-          this._evtMouseDown(event as MouseEvent);
+          // Skip processing the event when it resulted from a toolbar button click
+          if (!event.defaultPrevented) {
+            this._evtMouseDown(event as MouseEvent);
+          }
         }
         break;
       case 'mouseup':
@@ -1894,20 +1945,6 @@ export class Notebook extends StaticNotebook {
   }
 
   /**
-   * Handle a cell being moved.
-   */
-  protected onCellMoved(fromIndex: number, toIndex: number): void {
-    const i = this.activeCellIndex;
-    if (fromIndex === i) {
-      this.activeCellIndex = toIndex;
-    } else if (fromIndex < i && i <= toIndex) {
-      this.activeCellIndex--;
-    } else if (toIndex <= i && i < fromIndex) {
-      this.activeCellIndex++;
-    }
-  }
-
-  /**
    * Handle a cell being removed.
    */
   protected onCellRemoved(index: number, cell: Cell): void {
@@ -2044,6 +2081,68 @@ export class Notebook extends StaticNotebook {
   }
 
   /**
+   * Find heading with given ID in any of the cells.
+   */
+  async _findHeading(queryId: string): Promise<Private.IScrollTarget | null> {
+    // Loop on cells, get headings and search for first matching id.
+    for (let cellIdx = 0; cellIdx < this.widgets.length; cellIdx++) {
+      const cell = this.widgets[cellIdx];
+      if (
+        cell.model.type === 'raw' ||
+        (cell.model.type === 'markdown' && !(cell as MarkdownCell).rendered)
+      ) {
+        // Bail early
+        continue;
+      }
+      for (const heading of cell.headings) {
+        let id: string | undefined | null = '';
+        switch (heading.type) {
+          case Cell.HeadingType.HTML:
+            id = (heading as TableOfContentsUtils.IHTMLHeading).id;
+            break;
+          case Cell.HeadingType.Markdown:
+            {
+              const mdHeading =
+                heading as any as TableOfContentsUtils.Markdown.IMarkdownHeading;
+              id = await TableOfContentsUtils.Markdown.getHeadingId(
+                this.rendermime.markdownParser!,
+                mdHeading.raw,
+                mdHeading.level
+              );
+            }
+            break;
+        }
+        if (id === queryId) {
+          const element = this.node.querySelector(
+            `h${heading.level}[id="${id}"]`
+          ) as HTMLElement;
+
+          return {
+            cell,
+            element
+          };
+        }
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Find cell by its unique ID.
+   */
+  _findCellById(queryId: string): Private.IScrollTarget | null {
+    for (let cellIdx = 0; cellIdx < this.widgets.length; cellIdx++) {
+      const cell = this.widgets[cellIdx];
+      if (cell.model.id === queryId) {
+        return {
+          cell
+        };
+      }
+    }
+    return null;
+  }
+
+  /**
    * Handle `contextmenu` event.
    */
   private _evtContextMenuCapture(event: PointerEvent): void {
@@ -2135,7 +2234,12 @@ export class Notebook extends StaticNotebook {
       // We don't want to prevent the default selection behavior
       // if there is currently text selected in an output.
       const hasSelection = (window.getSelection() ?? '').toString() !== '';
-      if (button === 0 && shiftKey && !hasSelection) {
+      if (
+        button === 0 &&
+        shiftKey &&
+        !hasSelection &&
+        !['INPUT', 'OPTION'].includes(target.tagName)
+      ) {
         // Prevent browser selecting text in prompt or output
         event.preventDefault();
 
@@ -2371,17 +2475,7 @@ export class Notebook extends StaticNotebook {
       }
 
       // Move the cells one by one
-      model.sharedModel.transact(() => {
-        if (fromIndex < toIndex) {
-          for (let length = toMove.length; length > 0; length--) {
-            model.sharedModel.moveCell(fromIndex, toIndex);
-          }
-        } else if (fromIndex > toIndex) {
-          for (let length = toMove.length; length > 0; length--) {
-            model.sharedModel.moveCell(fromIndex++, toIndex++);
-          }
-        }
-      });
+      this.moveCell(fromIndex, toIndex, toMove.length);
     } else {
       // Handle the case where we are copying cells between
       // notebooks.
@@ -2571,7 +2665,7 @@ export class Notebook extends StaticNotebook {
     for (let i = 0; i < this.widgets.length; i++) {
       if (i !== this._activeCellIndex) {
         const cell = this.widgets[i];
-        if (cell.editor) {
+        if (!cell.model.isDisposed && cell.editor) {
           cell.model.selections.delete(cell.editor.uuid);
         }
       }
@@ -2597,6 +2691,12 @@ export class Notebook extends StaticNotebook {
   private _checkCacheOnNextResize = false;
 
   private _lastClipboardInteraction: 'copy' | 'cut' | 'paste' | null = null;
+  private _updateSelectedCells(): void {
+    this._selectedCells = this.widgets.filter(cell =>
+      this.isSelectedOrActive(cell)
+    );
+  }
+  private _selectedCells: Cell[] = [];
 }
 
 /**
@@ -2631,8 +2731,6 @@ export namespace Notebook {
      */
     export interface IOptions extends StaticNotebook.ContentFactory.IOptions {}
   }
-
-  export const defaultContentFactory: IContentFactory = new ContentFactory();
 }
 
 /**
@@ -2727,23 +2825,30 @@ namespace Private {
   }
 
   /**
-   * Process the `IOptions` passed to the notebook widget.
-   *
-   * #### Notes
-   * This defaults the content factory to that in the `Notebook` namespace.
+   * Information about resolved scroll target defined by URL fragment.
    */
-  export function processNotebookOptions(
-    options: Notebook.IOptions
-  ): Notebook.IOptions {
-    if (options.contentFactory) {
-      return options;
-    } else {
-      return {
-        rendermime: options.rendermime,
-        languagePreference: options.languagePreference,
-        contentFactory: Notebook.defaultContentFactory,
-        mimeTypeService: options.mimeTypeService
-      };
-    }
+  export interface IScrollTarget {
+    /**
+     * Target cell.
+     */
+    cell: Cell;
+    /**
+     * Element to scroll to within the cell.
+     */
+    element?: HTMLElement;
+  }
+
+  /**
+   * Parsed fragment identifier data.
+   */
+  export interface IFragmentData {
+    /**
+     * The kind of notebook element targetted by the fragment identifier.
+     */
+    kind: 'heading' | 'cell-id';
+    /*
+     * The value of the fragment query.
+     */
+    value: string;
   }
 }

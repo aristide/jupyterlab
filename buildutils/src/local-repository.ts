@@ -35,7 +35,11 @@ async function startLocalRegistry(out_dir: string, port = DEFAULT_PORT) {
   let prev_npm = utils.run('npm config get registry', { stdio: 'pipe' }, true);
   let prev_yarn = '';
   try {
-    prev_yarn = utils.run('yarn config get registry', { stdio: 'pipe' }, true);
+    prev_yarn = utils.run(
+      'yarn config get npmRegistryServer',
+      { stdio: 'pipe' },
+      true
+    );
   } catch (e) {
     // Do nothing
   }
@@ -87,15 +91,17 @@ packages:
 
   const options = { cwd: out_dir, detached: true, stdio: ['ignore', out, err] };
 
-  const bin_dir = utils.run('npm bin', { stdio: 'pipe' }, true);
-  const verdaccio_bin = path.join(bin_dir, 'verdaccio');
-  const subproc = child_process.spawn(verdaccio_bin, args.split(' '), options);
+  const subproc = child_process.spawn(
+    'npx',
+    ['verdaccio'].concat(args.split(' ')),
+    options
+  );
   subproc.unref();
 
   // Wait for Verdaccio to boot
   let content = '';
-  let delays = 0;
-  while (delays < 100) {
+  let delays = 12000;
+  while (delays > 0) {
     ps.stdout.write('.');
     if (content.indexOf('http address') !== -1) {
       break;
@@ -108,10 +114,11 @@ packages:
     if (fs.existsSync(log_file)) {
       content = fs.readFileSync(log_file, { encoding: 'utf-8' });
     }
-    delays += 1;
+    delays -= 100;
   }
-  if (delays === 100) {
-    console.error('Timed out!');
+  if (delays <= 0) {
+    console.error('Timed out!\nLOG:');
+    console.log(content);
     process.exit(1);
   }
   console.log('\nVerdaccio started');
@@ -137,8 +144,15 @@ packages:
     child_process.execFileSync('yarn', [
       'config',
       'set',
-      'registry',
+      'npmRegistryServer',
       local_registry
+    ]);
+    child_process.execFileSync('yarn', [
+      'config',
+      'set',
+      'unsafeHttpWhitelist',
+      '--json',
+      '["0.0.0.0"]'
     ]);
   } catch (e) {
     // yarn not available
@@ -149,16 +163,18 @@ packages:
   const pass = 'bar';
   const email = 'foo@bar.com';
   console.log('Logging in');
-  const loginPs = child_process.spawn(
-    'npm',
-    `login -r ${local_registry}`.split(' ')
-  );
+  const loginPs = child_process.spawn('npm', [
+    'login',
+    '--auth-type=legacy',
+    '-r',
+    local_registry
+  ]);
 
   const loggedIn = new Promise<void>((accept, reject) => {
     loginPs.stdout.on('data', (chunk: string) => {
       const data = Buffer.from(chunk, 'utf-8').toString().trim();
       console.log('stdout:', data);
-      if (data.indexOf('Logged in as') !== -1) {
+      if (data.indexOf('Logged in ') !== -1) {
         loginPs.stdin.end();
         // do not accept here yet, the token may not have been written
       } else {
@@ -224,10 +240,14 @@ async function stopLocalRegistry(out_dir: string) {
     child_process.execSync(`npm config rm registry`);
   }
   if (data.prev_yarn) {
-    child_process.execSync(`yarn config set registry ${data.prev_yarn}`);
+    child_process.execSync(
+      `yarn config set npmRegistryServer ${data.prev_yarn}`
+    );
+    child_process.execSync(`yarn config unset unsafeHttpWhitelist`);
   } else {
     try {
-      child_process.execSync(`yarn config delete registry`);
+      child_process.execSync(`yarn config unset npmRegistryServer`);
+      child_process.execSync(`yarn config unset unsafeHttpWhitelist`);
     } catch (e) {
       // yarn not available
     }
@@ -240,7 +260,11 @@ async function stopLocalRegistry(out_dir: string) {
 function fixLinks(package_dir: string) {
   let yarn_reg = '';
   try {
-    yarn_reg = utils.run('yarn config get registry', { stdio: 'pipe' }, true);
+    yarn_reg = utils.run(
+      'yarn config get npmRegistryServer',
+      { stdio: 'pipe' },
+      true
+    );
   } catch (e) {
     // Do nothing
   }

@@ -8,16 +8,15 @@ import {
   JupyterFrontEndPlugin
 } from '@jupyterlab/application';
 import {
-  ISanitizer,
   Notification,
   NotificationManager,
   ReactWidget
 } from '@jupyterlab/apputils';
-import { IMarkdownParser } from '@jupyterlab/rendermime';
 import { ISettingRegistry } from '@jupyterlab/settingregistry';
 import {
   GroupItem,
   IStatusBar,
+  Popup,
   showPopup,
   TextItem
 } from '@jupyterlab/statusbar';
@@ -35,11 +34,13 @@ import {
   UseSignal,
   VDomModel
 } from '@jupyterlab/ui-components';
-import { ReadonlyJSONObject, ReadonlyJSONValue } from '@lumino/coreutils';
-import { Widget } from '@lumino/widgets';
-import memoize from 'lodash.memoize';
+import {
+  PromiseDelegate,
+  ReadonlyJSONObject,
+  ReadonlyJSONValue
+} from '@lumino/coreutils';
 import * as React from 'react';
-import * as ReactDOM from 'react-dom';
+import { createRoot } from 'react-dom/client';
 import type {
   ClearWaitingQueueParams,
   CloseButtonProps,
@@ -52,7 +53,15 @@ import type {
   UpdateOptions
 } from 'react-toastify';
 
+/**
+ * Toast close button class
+ */
 const TOAST_CLOSE_BUTTON_CLASS = 'jp-Notification-Toast-Close';
+
+/**
+ * Maximal number of characters displayed in a notification.
+ */
+const MAX_MESSAGE_LENGTH = 140;
 
 namespace CommandIDs {
   /**
@@ -82,9 +91,17 @@ const HALF_SPACING = 4;
  * Notification center properties
  */
 interface INotificationCenterProps {
+  /**
+   * Notification manager
+   */
   manager: NotificationManager;
+  /**
+   * Close notification handler
+   */
   onClose: () => void;
-  parser: (message: string) => Promise<string>;
+  /**
+   * Translation object
+   */
   trans: TranslationBundle;
 }
 
@@ -92,7 +109,7 @@ interface INotificationCenterProps {
  * Notification center view
  */
 function NotificationCenter(props: INotificationCenterProps): JSX.Element {
-  const { manager, onClose, parser, trans } = props;
+  const { manager, onClose, trans } = props;
 
   // Markdown parsed notifications
   const [notifications, setNotifications] = React.useState<
@@ -101,16 +118,13 @@ function NotificationCenter(props: INotificationCenterProps): JSX.Element {
   // Load asynchronously react-toastify icons
   const [icons, setIcons] = React.useState<typeof Icons | null>(null);
 
-  const parse = React.useCallback(memoize(parser), [parser]);
-
   React.useEffect(() => {
     async function onChanged(): Promise<void> {
       setNotifications(
         await Promise.all(
           manager.notifications.map(async n => {
             return Object.freeze({
-              ...n,
-              message: await parse(n.message)
+              ...n
             });
           })
         )
@@ -354,12 +368,10 @@ export const notificationPlugin: JupyterFrontEndPlugin<void> = {
   id: '@jupyterlab/apputils-extension:notification',
   autoStart: true,
   requires: [IStatusBar],
-  optional: [IMarkdownParser, ISanitizer, ISettingRegistry, ITranslator],
+  optional: [ISettingRegistry, ITranslator],
   activate: (
     app: JupyterFrontEnd,
     statusBar: IStatusBar,
-    parser: IMarkdownParser | null,
-    sanitizer: ISanitizer | null,
     settingRegistry: ISettingRegistry | null,
     translator: ITranslator | null
   ): void => {
@@ -382,13 +394,6 @@ export const notificationPlugin: JupyterFrontEndPlugin<void> = {
         plugin.changed.connect(updateSettings);
       });
     }
-
-    // Parse and sanitize the string.
-    const parse =
-      sanitizer && parser
-        ? async (message: string) =>
-            sanitizer.sanitize(await parser.render(message))
-        : (message: string) => Promise.resolve(message);
 
     app.commands.addCommand(CommandIDs.notify, {
       label: trans.__('Emit a notification'),
@@ -477,7 +482,7 @@ export const notificationPlugin: JupyterFrontEndPlugin<void> = {
       }
     });
 
-    let popup: Widget | null = null;
+    let popup: Popup | null = null;
     model.listOpened = false;
 
     const notificationList = ReactWidget.create(
@@ -486,7 +491,6 @@ export const notificationPlugin: JupyterFrontEndPlugin<void> = {
         onClose={() => {
           popup?.dispose();
         }}
-        parser={parse}
         trans={trans}
       ></NotificationCenter>
     );
@@ -509,7 +513,7 @@ export const notificationPlugin: JupyterFrontEndPlugin<void> = {
 
       switch (change.type) {
         case 'added':
-          await Private.createToast(id, await parse(message), type, options);
+          await Private.createToast(id, message, type, options);
           break;
         case 'updated':
           {
@@ -523,26 +527,24 @@ export const notificationPlugin: JupyterFrontEndPlugin<void> = {
             if (toast.isActive(id)) {
               // Update existing toast
               const closeToast = (): void => {
+                // Dismiss the displayed toast
                 toast.dismiss(id);
+                // Dismiss the notification from the queue
+                manager.dismiss(id);
               };
               toast.update(id, {
                 type: type === 'in-progress' ? null : type,
                 isLoading: type === 'in-progress',
                 autoClose: autoClose,
                 render: Private.createContent(
-                  await parse(message),
+                  message,
                   closeToast,
                   options.actions
                 )
               });
             } else {
               // Needs to recreate a closed toast
-              await Private.createToast(
-                id,
-                await parse(message),
-                type,
-                options
-              );
+              await Private.createToast(id, message, type, options);
             }
           }
           break;
@@ -560,6 +562,14 @@ export const notificationPlugin: JupyterFrontEndPlugin<void> = {
         popup.dispose();
         popup = null;
       } else {
+        popup = showPopup({
+          body: notificationList,
+          anchor: notificationStatus,
+          align: 'right',
+          hasDynamicSize: true,
+          startHidden: true
+        });
+
         // Dismiss all toasts when opening the notification center
         Private.toast()
           .then(t => {
@@ -569,17 +579,12 @@ export const notificationPlugin: JupyterFrontEndPlugin<void> = {
             console.error(`Failed to dismiss all toasts:\n${r}`);
           })
           .finally(() => {
-            popup = showPopup({
-              body: notificationList,
-              anchor: notificationStatus,
-              align: 'right',
-              hasDynamicSize: true
-            });
+            popup?.launch();
 
             // Focus on the pop-up
             notificationList.node.focus();
 
-            popup.disposed.connect(() => {
+            popup?.disposed.connect(() => {
               model.listOpened = false;
               popup = null;
             });
@@ -640,7 +645,7 @@ namespace Private {
     return (
       <button
         className={`jp-Button jp-mod-minimal ${TOAST_CLOSE_BUTTON_CLASS}`}
-        title={trans.__('Close notification')}
+        title={trans.__('Hide notification')}
         onClick={props.closeToast}
       >
         <closeIcon.react className="jp-icon-hover" tag="span"></closeIcon.react>
@@ -710,12 +715,20 @@ namespace Private {
     onChange(callback: (toast: ToastItem) => void): () => void;
   }
 
+  let waitForToastify: PromiseDelegate<void> | null = null;
+
   /**
    * Asynchronously load the toast container
    *
    * @returns The toast object
    */
   export async function toast(): Promise<IToast> {
+    if (waitForToastify === null) {
+      waitForToastify = new PromiseDelegate();
+    } else {
+      await waitForToastify.promise;
+    }
+
     if (toastify === null) {
       toastify = await import('react-toastify');
 
@@ -723,8 +736,9 @@ namespace Private {
         document.createElement('div')
       );
       container.id = 'react-toastify-container';
+      const root = createRoot(container);
 
-      ReactDOM.render(
+      root.render(
         <toastify.ToastContainer
           draggable={false}
           closeOnClick={false}
@@ -736,9 +750,10 @@ namespace Private {
           className="jp-toastContainer"
           transition={toastify.Slide}
           closeButton={CloseButton}
-        ></toastify.ToastContainer>,
-        container
+        ></toastify.ToastContainer>
       );
+
+      waitForToastify.resolve();
     }
 
     return toastify.toast;
@@ -767,18 +782,31 @@ namespace Private {
     closeToast: () => void;
   }
 
+  const displayType2Class: Record<Notification.ActionDisplayType, string> = {
+    accent: 'jp-mod-accept',
+    link: 'jp-mod-link',
+    warn: 'jp-mod-warn',
+    default: ''
+  };
+
   /**
    * Create a button with customized callback in a toast
    */
   function ToastButton({ action, closeToast }: IToastButtonProps): JSX.Element {
-    const clickHandler = (): void => {
-      closeToast();
-      action.callback();
+    const clickHandler = (event: React.MouseEvent): void => {
+      action.callback(event as any);
+      if (!event.defaultPrevented) {
+        closeToast();
+      }
     };
+    const classes = [
+      'jp-toast-button',
+      displayType2Class[action.displayType ?? 'default']
+    ].join(' ');
     return (
       <Button
         title={action.caption ?? action.label}
-        className={'jp-toast-button'}
+        className={classes}
         onClick={clickHandler}
         small={true}
       >
@@ -799,9 +827,20 @@ namespace Private {
     closeHandler: () => void,
     actions?: Notification.IAction[]
   ): React.ReactNode {
+    const shortenMessage =
+      message.length > MAX_MESSAGE_LENGTH
+        ? message.slice(0, MAX_MESSAGE_LENGTH) + '…'
+        : message;
     return (
       <>
-        <div dangerouslySetInnerHTML={{ __html: message }}></div>
+        <div>
+          {shortenMessage.split('\n').map((part, index) => (
+            <React.Fragment key={`part-${index}`}>
+              {index > 0 ? <br /> : null}
+              {part}
+            </React.Fragment>
+          ))}
+        </div>
         {(actions?.length ?? 0) > 0 && (
           <div className="jp-toast-buttonBar">
             <div className="jp-toast-spacer" />
@@ -848,8 +887,15 @@ namespace Private {
     } as any;
 
     return t(
-      ({ closeToast }: { closeToast: () => void }) =>
-        createContent(message, closeToast, actions),
+      ({ closeToast }: { closeToast?: () => void }) =>
+        createContent(
+          message,
+          () => {
+            if (closeToast) closeToast();
+            Notification.manager.dismiss(toastId);
+          },
+          actions
+        ),
       toastOptions
     );
   }

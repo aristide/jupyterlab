@@ -2,35 +2,15 @@
 # Distributed under the terms of the Modified BSD License.
 
 import json
-from typing import NamedTuple
-from unittest.mock import MagicMock, Mock, patch
-
-try:
-    from unittest.mock import AsyncMock
-except ImportError:
-    AsyncMock = None
+from unittest.mock import Mock, patch
 
 import pytest
-import tornado
-from jupyter_server.utils import ensure_async
 from traitlets.config import Config, Configurable
 
 from jupyterlab.extensions import PyPIExtensionManager, ReadOnlyExtensionManager
 from jupyterlab.extensions.manager import ExtensionManager, ExtensionPackage
 
-
-class Response(NamedTuple):
-    """Fake tornado response."""
-
-    body: bytes
-
-
-def to_async_mock(args):
-    """Convert arguments to awaitable arguments or asynchronous mock."""
-    if AsyncMock is None:
-        return ensure_async(args)
-    else:
-        return AsyncMock(return_value=args)
+from . import fake_client_factory
 
 
 @pytest.mark.parametrize(
@@ -82,17 +62,12 @@ async def test_ExtensionManager_list_extensions_query(monkeypatch):
     assert extensions == ([extension1, extension2], 1)
 
 
-@patch("tornado.httpclient.AsyncHTTPClient")
+@patch("tornado.httpclient.AsyncHTTPClient", new_callable=fake_client_factory)
 async def test_ExtensionManager_list_extensions_query_allow(mock_client, monkeypatch):
     extension1 = ExtensionPackage("extension1", "Extension 1 description", "", "prebuilt")
     extension2 = ExtensionPackage("extension2", "Extension 2 description", "", "prebuilt")
 
-    mock_client.return_value = MagicMock(
-        spec=tornado.httpclient.AsyncHTTPClient,
-        fetch=to_async_mock(
-            Response(json.dumps({"allowed_extensions": [{"name": "extension1"}]}).encode())
-        ),
-    )
+    mock_client.body = json.dumps({"allowed_extensions": [{"name": "extension1"}]}).encode()
 
     async def mock_list(*args, **kwargs):
         return {"extension1": extension1, "extension2": extension2}, None
@@ -100,7 +75,7 @@ async def test_ExtensionManager_list_extensions_query_allow(mock_client, monkeyp
     monkeypatch.setattr(ReadOnlyExtensionManager, "list_packages", mock_list)
 
     manager = ReadOnlyExtensionManager(
-        ext_options=dict(allowed_extensions_uris={"http://dummy-allowed-extension"}),
+        ext_options={"allowed_extensions_uris": {"http://dummy-allowed-extension"}},
     )
 
     extensions = await manager.list_extensions("ext")
@@ -108,17 +83,12 @@ async def test_ExtensionManager_list_extensions_query_allow(mock_client, monkeyp
     assert extensions == ([extension1], 1)
 
 
-@patch("tornado.httpclient.AsyncHTTPClient")
+@patch("tornado.httpclient.AsyncHTTPClient", new_callable=fake_client_factory)
 async def test_ExtensionManager_list_extensions_query_block(mock_client, monkeypatch):
     extension1 = ExtensionPackage("extension1", "Extension 1 description", "", "prebuilt")
     extension2 = ExtensionPackage("extension2", "Extension 2 description", "", "prebuilt")
 
-    mock_client.return_value = MagicMock(
-        spec=tornado.httpclient.AsyncHTTPClient,
-        fetch=to_async_mock(
-            Response(json.dumps({"blocked_extensions": [{"name": "extension1"}]}).encode())
-        ),
-    )
+    mock_client.body = json.dumps({"blocked_extensions": [{"name": "extension1"}]}).encode()
 
     async def mock_list(*args, **kwargs):
         return {"extension1": extension1, "extension2": extension2}, None
@@ -126,7 +96,7 @@ async def test_ExtensionManager_list_extensions_query_block(mock_client, monkeyp
     monkeypatch.setattr(ReadOnlyExtensionManager, "list_packages", mock_list)
 
     manager = ReadOnlyExtensionManager(
-        ext_options=dict(blocked_extensions_uris={"http://dummy-blocked-extension"})
+        ext_options={"blocked_extensions_uris": {"http://dummy-blocked-extension"}}
     )
 
     extensions = await manager.list_extensions("ext")
@@ -134,24 +104,17 @@ async def test_ExtensionManager_list_extensions_query_block(mock_client, monkeyp
     assert extensions == ([extension2], 1)
 
 
-@patch("tornado.httpclient.AsyncHTTPClient")
+@patch("tornado.httpclient.AsyncHTTPClient", new_callable=fake_client_factory)
 async def test_ExtensionManager_list_extensions_query_allow_block(mock_client, monkeypatch):
     extension1 = ExtensionPackage("extension1", "Extension 1 description", "", "prebuilt")
     extension2 = ExtensionPackage("extension2", "Extension 2 description", "", "prebuilt")
 
-    mock_client.return_value = MagicMock(
-        spec=tornado.httpclient.AsyncHTTPClient,
-        fetch=to_async_mock(
-            Response(
-                json.dumps(
-                    {
-                        "allowed_extensions": [{"name": "extension1"}],
-                        "blocked_extensions": [{"name": "extension1"}],
-                    }
-                ).encode()
-            )
-        ),
-    )
+    mock_client.body = json.dumps(
+        {
+            "allowed_extensions": [{"name": "extension1"}],
+            "blocked_extensions": [{"name": "extension1"}],
+        }
+    ).encode()
 
     async def mock_list(*args, **kwargs):
         return {"extension1": extension1, "extension2": extension2}, None
@@ -159,10 +122,10 @@ async def test_ExtensionManager_list_extensions_query_allow_block(mock_client, m
     monkeypatch.setattr(ReadOnlyExtensionManager, "list_packages", mock_list)
 
     manager = ReadOnlyExtensionManager(
-        ext_options=dict(
-            allowed_extensions_uris={"http://dummy-allowed-extension"},
-            blocked_extensions_uris={"http://dummy-blocked-extension"},
-        )
+        ext_options={
+            "allowed_extensions_uris": {"http://dummy-allowed-extension"},
+            "blocked_extensions_uris": {"http://dummy-blocked-extension"},
+        }
     )
 
     extensions = await manager.list_extensions("ext")
@@ -372,7 +335,7 @@ async def test_PyPiExtensionManager_list_extensions_query(mocked_rpcclient):
 
 
 async def test_PyPiExtensionManager_custom_server_url():
-    BASE_URL = "https://mylocal.pypi.server/pypi"
+    BASE_URL = "https://mylocal.pypi.server/pypi"  # noqa
 
     parent = Configurable(config=Config({"PyPIExtensionManager": {"base_url": BASE_URL}}))
 

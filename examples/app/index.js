@@ -36,7 +36,8 @@ const extensions = [
   import('@jupyterlab/mainmenu-extension'),
   import('@jupyterlab/markdownviewer-extension'),
   import('@jupyterlab/markedparser-extension'),
-  import('@jupyterlab/mathjax2-extension'),
+  import('@jupyterlab/mathjax-extension'),
+  import('@jupyterlab/metadataform-extension'),
   import('@jupyterlab/notebook-extension').then(plugins =>
     plugins.default.filter(({ id }) => !id.includes(':language-server'))
   ),
@@ -45,7 +46,6 @@ const extensions = [
   import('@jupyterlab/settingeditor-extension'),
   import('@jupyterlab/shortcuts-extension'),
   import('@jupyterlab/statusbar-extension'),
-  import('@jupyterlab/terminal-extension'),
   import('@jupyterlab/theme-dark-extension'),
   import('@jupyterlab/theme-light-extension'),
   import('@jupyterlab/toc-extension'),

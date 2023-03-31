@@ -1,77 +1,36 @@
 /* eslint-disable @typescript-eslint/ban-types */
 // Copyright (c) Jupyter Development Team.
 // Distributed under the terms of the Modified BSD License.
-// / <reference types="codemirror"/>
-// / <reference types="codemirror/searchcursor"/>
 
-import { CodeEditor } from '@jupyterlab/codeeditor';
-import { ICollaborator, IObservableMap } from '@jupyterlab/observables';
-import * as models from '@jupyterlab/shared-models';
-import {
-  ITranslator,
-  nullTranslator,
-  TranslationBundle
-} from '@jupyterlab/translation';
-import { ArrayExt } from '@lumino/algorithm';
-import { UUID } from '@lumino/coreutils';
-import { DisposableDelegate, IDisposable } from '@lumino/disposable';
-import { Signal } from '@lumino/signaling';
-
-import {
-  indentMore,
-  insertNewlineAndIndent,
-  insertTab
-} from '@codemirror/commands';
+import { insertNewlineAndIndent } from '@codemirror/commands';
 import { ensureSyntaxTree } from '@codemirror/language';
 import {
+  Compartment,
   EditorSelection,
   EditorState,
   Extension,
   Prec,
-  Range,
   StateCommand,
-  StateEffect,
-  StateEffectType,
-  StateField,
-  Text,
-  Transaction
+  Text
 } from '@codemirror/state';
-import {
-  Command,
-  Decoration,
-  DecorationSet,
-  EditorView,
-  ViewUpdate,
-  WidgetType
-} from '@codemirror/view';
+import { Command, EditorView, ViewUpdate } from '@codemirror/view';
+import { CodeEditor } from '@jupyterlab/codeeditor';
 import { SyntaxNodeRef } from '@lezer/common';
-import { yCollab } from 'y-codemirror.next';
-import { Awareness } from 'y-protocols/awareness';
-import * as Y from 'yjs';
-import './codemirror-ipython';
+import { UUID } from '@lumino/coreutils';
+import { Signal } from '@lumino/signaling';
 import './codemirror-ipythongfm';
-import { Configuration } from './editorconfiguration';
-import { Mode } from './mode';
+import { ExtensionsHandler } from './extension';
+import { EditorLanguageRegistry } from './language';
+import {
+  IEditorExtensionRegistry,
+  IEditorLanguageRegistry,
+  IExtensionsHandler
+} from './token';
 
 /**
  * The class name added to CodeMirrorWidget instances.
  */
 const EDITOR_CLASS = 'jp-CodeMirrorEditor';
-
-/**
- * The class name added to read only cell editor widgets.
- */
-const READ_ONLY_CLASS = 'jp-mod-readOnly';
-
-/**
- * The class name for the hover box for collaborator cursors.
- */
-const COLLABORATOR_CURSOR_CLASS = 'jp-CollaboratorCursor';
-
-/**
- * The class name for the hover box for collaborator cursors.
- */
-const COLLABORATOR_HOVER_CLASS = 'jp-CollaboratorCursor-hover';
 
 /**
  * The key code for the up arrow key.
@@ -84,17 +43,6 @@ const UP_ARROW = 38;
 const DOWN_ARROW = 40;
 
 /**
- * The time that a collaborator name hover persists.
- */
-const HOVER_TIMEOUT = 1000;
-
-interface IYCodeMirrorBinding {
-  text: Y.Text;
-  awareness: Awareness | null;
-  undoManager: Y.UndoManager | null;
-}
-
-/**
  * CodeMirror editor.
  */
 export class CodeMirrorEditor implements CodeEditor.IEditor {
@@ -102,10 +50,13 @@ export class CodeMirrorEditor implements CodeEditor.IEditor {
    * Construct a CodeMirror editor.
    */
   constructor(options: CodeMirrorEditor.IOptions) {
-    this._editorConfig = new Configuration.EditorConfiguration();
+    this._languages = options.languages ?? new EditorLanguageRegistry();
+    this._configurator =
+      options.extensionsRegistry?.createNew({
+        ...options,
+        inline: options.inline ?? false
+      }) ?? new ExtensionsHandler();
     const host = (this.host = options.host);
-    this.translator = options.translator || nullTranslator;
-    this._trans = this.translator.load('jupyterlab');
 
     host.classList.add(EDITOR_CLASS);
     host.classList.add('jp-Editor');
@@ -113,81 +64,14 @@ export class CodeMirrorEditor implements CodeEditor.IEditor {
     host.addEventListener('blur', this, true);
     host.addEventListener('scroll', this, true);
 
-    this._uuid = options.uuid || UUID.uuid4();
-
-    // State and effects for handling the selection marks
-    this._addMark = StateEffect.define<Private.ICollabSelectionText>();
-    this._removeMark = StateEffect.define<Private.ICollabDecorationSet>();
-
-    this._markField = StateField.define<DecorationSet>({
-      create: () => {
-        return Decoration.none;
-      },
-      update: (marks, transaction) => {
-        marks = marks.map(transaction.changes);
-        for (let ef of transaction.effects) {
-          if (ef.is(this._addMark)) {
-            let e = ef as StateEffect<Private.ICollabSelectionText>;
-            const decorations = this._buildMarkDecoration(
-              e.value.uuid,
-              e.value.selections
-            );
-            marks = marks.update({ add: decorations });
-            this._selectionMarkers[e.value.uuid] = decorations;
-          } else if (ef.is(this._removeMark)) {
-            let e = ef as StateEffect<Private.ICollabDecorationSet>;
-            for (let rd of ef.value.decorations) {
-              marks = marks.update({
-                filter: (from, to, value) => {
-                  return !(
-                    from === rd.from &&
-                    to === rd.to &&
-                    value === rd.value
-                  );
-                }
-              });
-            }
-            delete this._selectionMarkers[e.value.uuid];
-          }
-        }
-        return marks;
-      },
-      provide: f => EditorView.decorations.from(f)
-    });
-
-    // Handle selection style.
-    const style = options.selectionStyle || {};
-    this._selectionStyle = {
-      ...CodeEditor.defaultSelectionStyle,
-      ...(style as CodeEditor.ISelectionStyle)
-    };
+    this._uuid = options.uuid ?? UUID.uuid4();
 
     const model = (this._model = options.model);
-    const config = options.config || {};
-    const fullConfig = (this._config = {
-      ...CodeMirrorEditor.defaultConfig,
-      ...config
-    });
 
-    this._initializeEditorBinding();
-
-    // Extension for handling DOM events
-    const domEventHandlers = EditorView.domEventHandlers({
+    // Default keydown handler - it will have low priority
+    const onKeyDown = EditorView.domEventHandlers({
       keydown: (event: KeyboardEvent, view: EditorView) => {
-        const index = ArrayExt.findFirstIndex(
-          this._keydownHandlers,
-          handler => {
-            if (handler(this, event) === true) {
-              event.preventDefault();
-              return true;
-            }
-            return false;
-          }
-        );
-        if (index === -1) {
-          return this.onKeydown(event);
-        }
-        return false;
+        return this.onKeydown(event);
       }
     });
 
@@ -197,79 +81,27 @@ export class CodeMirrorEditor implements CodeEditor.IEditor {
       }
     );
 
-    // The list of internal strings is available at https://codemirror.net/examples/translate/
-    const translation = EditorState.phrases.of({
-      // @codemirror/view
-      'Control character': this._trans.__('Control character'),
-      // @codemirror/commands
-      'Selection deleted': this._trans.__('Selection deleted'),
-      // @codemirror/language
-      'Folded lines': this._trans.__('Folded lines'),
-      'Unfolded lines': this._trans.__('Unfolded lines'),
-      to: this._trans.__('to'),
-      'folded code': this._trans.__('folded code'),
-      unfold: this._trans.__('unfold'),
-      'Fold line': this._trans.__('Fold line'),
-      'Unfold line': this._trans.__('Unfold line'),
-      // @codemirror/search
-      'Go to line': this._trans.__('Go to line'),
-      go: this._trans.__('go'),
-      Find: this._trans.__('Find'),
-      Replace: this._trans.__('Replace'),
-      next: this._trans.__('next'),
-      previous: this._trans.__('previous'),
-      all: this._trans.__('all'),
-      'match case': this._trans.__('match case'),
-      replace: this._trans.__('replace'),
-      'replace all': this._trans.__('replace all'),
-      close: this._trans.__('close'),
-      'current match': this._trans.__('current match'),
-      'replaced $ matches': this._trans.__('replaced $ matches'),
-      'replaced match on line $': this._trans.__('replaced match on line $'),
-      'on line': this._trans.__('on line'),
-      // @codemirror/autocomplete
-      Completions: this._trans.__('Completions'),
-      // @codemirror/lint
-      Diagnostics: this._trans.__('Diagnostics'),
-      'No diagnostics': this._trans.__('No diagnostics')
-    });
-
     this._editor = Private.createEditor(
       host,
-      fullConfig,
-      this._yeditorBinding,
-      this._editorConfig,
+      this._configurator,
       [
-        this._markField,
-        Prec.high(domEventHandlers),
+        // We need to set the order to high, otherwise the keybinding for ArrowUp/ArrowDown
+        // will process the event shunting our edge detection code.
+        Prec.high(onKeyDown),
         updateListener,
-        translation
-      ]
+        // Initialize with empty extension
+        this._language.of([]),
+        ...(options.extensions ?? [])
+      ],
+      model.sharedModel.source
     );
-
-    // every time the model is switched, we need to re-initialize the editor binding
-    this.model.sharedModelSwitched.connect(this._initializeEditorBinding, this);
 
     this._onMimeTypeChanged();
     this._onCursorActivity();
 
+    this._configurator.configChanged.connect(this.onConfigChanged, this);
     model.mimeTypeChanged.connect(this._onMimeTypeChanged, this);
-    model.selections.changed.connect(this._onSelectionsChanged, this);
   }
-
-  /**
-   * Initialize the editor binding.
-   */
-  private _initializeEditorBinding(): void {
-    const sharedModel = this.model.sharedModel as models.IYText;
-    this._yeditorBinding = {
-      text: sharedModel.ysource,
-      awareness: sharedModel.awareness,
-      undoManager: sharedModel.undoManager
-    };
-  }
-
-  save: () => void;
 
   /**
    * A signal emitted when either the top or bottom edge is requested.
@@ -289,16 +121,6 @@ export class CodeMirrorEditor implements CodeEditor.IEditor {
   }
   set uuid(value: string) {
     this._uuid = value;
-  }
-
-  /**
-   * The selection style of this editor.
-   */
-  get selectionStyle(): CodeEditor.ISelectionStyle {
-    return this._selectionStyle;
-  }
-  set selectionStyle(value: CodeEditor.ISelectionStyle) {
-    this._selectionStyle = value;
   }
 
   /**
@@ -361,7 +183,7 @@ export class CodeMirrorEditor implements CodeEditor.IEditor {
     this.host.removeEventListener('focus', this, true);
     this.host.removeEventListener('blur', this, true);
     this.host.removeEventListener('scroll', this, true);
-    this._keydownHandlers.length = 0;
+    this._configurator.dispose();
     Signal.clearData(this);
     this.editor.destroy();
   }
@@ -369,24 +191,22 @@ export class CodeMirrorEditor implements CodeEditor.IEditor {
   /**
    * Get a config option for the editor.
    */
-  getOption<K extends keyof CodeMirrorEditor.IConfig>(
-    option: K
-  ): CodeMirrorEditor.IConfig[K] {
-    return this._config[option];
+  getOption(option: string): unknown {
+    return this._configurator.getOption(option);
+  }
+
+  /**
+   * Whether the option exists or not.
+   */
+  hasOption(option: string): boolean {
+    return this._configurator.hasOption(option);
   }
 
   /**
    * Set a config option for the editor.
    */
-  setOption<K extends keyof CodeMirrorEditor.IConfig>(
-    option: K,
-    value: CodeMirrorEditor.IConfig[K]
-  ): void {
-    // Don't bother setting the option if it is already the same.
-    if (this._config[option] !== value) {
-      this._config[option] = value;
-      this._editorConfig.reconfigureExtension(this._editor, option, value);
-    }
+  setOption(option: string, value: unknown): void {
+    this._configurator.setOption(option, value);
   }
 
   /**
@@ -397,13 +217,19 @@ export class CodeMirrorEditor implements CodeEditor.IEditor {
    * the costly update at the end, and not after every option
    * is set.
    */
-  setOptions(options: Partial<CodeMirrorEditor.IConfig>): void {
-    this._config = { ...this._config, ...options };
-    this._editorConfig.reconfigureExtensions(this._editor, options);
+  setOptions(options: Record<string, any>): void {
+    this._configurator.setOptions(options);
   }
 
+  /**
+   * Inject an extension into the editor
+   *
+   * @alpha
+   * @experimental
+   * @param ext CodeMirror 6 extension
+   */
   injectExtension(ext: Extension): void {
-    this._editorConfig.injectExtension(this._editor, ext);
+    this._configurator.injectExtension(this._editor, ext);
   }
 
   /**
@@ -450,7 +276,7 @@ export class CodeMirrorEditor implements CodeEditor.IEditor {
    * Clear the undo history.
    */
   clearHistory(): void {
-    this._yeditorBinding?.undoManager?.clear();
+    this.model.sharedModel.clearUndoHistory();
   }
 
   /**
@@ -472,14 +298,6 @@ export class CodeMirrorEditor implements CodeEditor.IEditor {
    */
   blur(): void {
     this._editor.contentDOM.blur();
-  }
-
-  /**
-   * Refresh the editor if it is focused;
-   * otherwise postpone refreshing till focusing.
-   */
-  resizeToFit(): void {
-    this._clearHover();
   }
 
   get state(): EditorState {
@@ -513,20 +331,6 @@ export class CodeMirrorEditor implements CodeEditor.IEditor {
     const fromOffset = this.getOffsetAt(this._toPosition(from));
     const toOffset = this.getOffsetAt(this._toPosition(to));
     return this.state.sliceDoc(fromOffset, toOffset);
-  }
-
-  /**
-   * Add a keydown handler to the editor.
-   *
-   * @param handler - A keydown handler.
-   *
-   * @returns A disposable that can be used to remove the handler.
-   */
-  addKeydownHandler(handler: CodeEditor.KeydownHandler): IDisposable {
-    this._keydownHandlers.push(handler);
-    return new DisposableDelegate(() => {
-      ArrayExt.removeAllWhere(this._keydownHandlers, val => val === handler);
-    });
   }
 
   /**
@@ -663,10 +467,21 @@ export class CodeMirrorEditor implements CodeEditor.IEditor {
   /**
    * Replaces the current selection with the given text.
    *
+   * Behaviour for multiple selections is undefined.
+   *
    * @param text The text to be inserted.
    */
   replaceSelection(text: string): void {
-    this.state.replaceSelection(text);
+    const firstSelection = this.getSelections()[0];
+    this.model.sharedModel.updateSource(
+      this.getOffsetAt(firstSelection.start),
+      this.getOffsetAt(firstSelection.end),
+      text
+    );
+    const newPosition = this.getPositionAt(
+      this.getOffsetAt(firstSelection.start) + text.length
+    );
+    this.setSelection({ start: newPosition, end: newPosition });
   }
 
   /**
@@ -678,6 +493,10 @@ export class CodeMirrorEditor implements CodeEditor.IEditor {
     if (tree) {
       tree.iterate({
         enter: (node: SyntaxNodeRef) => {
+          // If it has a child, it is not a leaf, but we still want to enter
+          if (node.node.firstChild !== null) {
+            return true;
+          }
           tokens.push({
             value: this.state.sliceDoc(node.from, node.to),
             offset: node.from,
@@ -695,13 +514,29 @@ export class CodeMirrorEditor implements CodeEditor.IEditor {
    */
   getTokenAt(offset: number): CodeEditor.IToken {
     const tree = ensureSyntaxTree(this.state, offset);
+    let token: CodeEditor.IToken | null = null;
     if (tree) {
-      const node = tree.resolveInner(offset);
-      return {
-        value: this.state.sliceDoc(node.from, node.to),
-        offset: node.from,
-        type: node.name
-      };
+      tree.iterate({
+        enter: (node: SyntaxNodeRef) => {
+          // If it has a child, it is not a leaf, but we still want to enter
+          if (node.node.firstChild !== null) {
+            return true;
+          }
+          if (offset >= node.from && offset <= node.to) {
+            token = {
+              value: this.state.sliceDoc(node.from, node.to),
+              offset: node.from,
+              type: node.name
+            };
+            // We have just found the relevant leaf token, no need to iterate further
+            return false;
+          }
+          return true;
+        }
+      });
+    }
+    if (token !== null) {
+      return token;
     } else {
       return {
         value: '',
@@ -734,6 +569,13 @@ export class CodeMirrorEditor implements CodeEditor.IEditor {
    */
   execCommand(command: Command | StateCommand): void {
     command(this.editor);
+  }
+
+  protected onConfigChanged(
+    configurator: IExtensionsHandler,
+    changes: Record<string, any>
+  ): void {
+    configurator.reconfigureExtensions(this._editor, changes);
   }
 
   /**
@@ -772,141 +614,23 @@ export class CodeMirrorEditor implements CodeEditor.IEditor {
    * Handles a mime type change.
    */
   private _onMimeTypeChanged(): void {
-    const mime = this._model.mimeType;
-
     // TODO: should we provide a hook for when the mode is done being set?
-    void Mode.ensure(mime).then(spec => {
-      if (spec) {
-        this._editorConfig.reconfigureExtension(
-          this._editor,
-          'language',
-          spec.support!
-        );
-      }
-    });
-  }
-
-  /**
-   * Handles a selections change.
-   */
-  private _onSelectionsChanged(
-    selections: IObservableMap<CodeEditor.ITextSelection[]>,
-    args: IObservableMap.IChangedArgs<CodeEditor.ITextSelection[]>
-  ): void {
-    const uuid = args.key;
-    if (uuid !== this.uuid) {
-      this._cleanSelections(uuid);
-      if (args.type !== 'remove' && args.newValue) {
-        this._markSelections(uuid, args.newValue);
-      }
-    }
-  }
-
-  /**
-   * Clean selections for the given uuid.
-   */
-  private _cleanSelections(uuid: string) {
-    this.editor.dispatch({
-      effects: this._removeMark.of({
-        uuid: uuid,
-        decorations: this._selectionMarkers[uuid]
+    this._languages
+      .getLanguage(this._model.mimeType)
+      .then(language => {
+        this._editor.dispatch({
+          effects: this._language.reconfigure(language?.support ?? [])
+        });
       })
-    });
-  }
-
-  private _buildMarkDecoration(
-    uuid: string,
-    selections: Private.ISelectionText[]
-  ) {
-    const decorations: Range<Decoration>[] = [];
-
-    // If we are marking selections corresponding to an active hover,
-    // remove it.
-    if (uuid === this._hoverId) {
-      this._clearHover();
-    }
-    // If we can id the selection to a specific collaborator,
-    // use that information.
-    let collaborator: ICollaborator | undefined;
-
-    // Style each selection for the uuid.
-    selections.forEach(selection => {
-      const from = selection.from;
-      const to = selection.to;
-      // Only render selections if the start is not equal to the end.
-      // In that case, we don't need to render the cursor.
-      if (from !== to) {
-        const style = collaborator
-          ? { ...selection.style, color: collaborator.color }
-          : selection.style;
-        const decoration = Decoration.mark({
-          attributes: this._toMarkSpec(style)
-        });
-        decorations.push(
-          from > to ? decoration.range(to, from) : decoration.range(to, from)
+      .catch(reason => {
+        console.log(
+          `Failed to load language for '${this._model.mimeType}'.`,
+          reason
         );
-      } else if (collaborator) {
-        const caret = Decoration.widget({
-          widget: this._getCaret(collaborator)
+        this._editor.dispatch({
+          effects: this._language.reconfigure([])
         });
-        decorations.push(caret.range(from));
-      }
-    });
-
-    return decorations;
-  }
-
-  /**
-   * Converts the selection style to a text marker options.
-   */
-  private _toMarkSpec(style: CodeEditor.ISelectionStyle) {
-    const r = parseInt(style.color.slice(1, 3), 16);
-    const g = parseInt(style.color.slice(3, 5), 16);
-    const b = parseInt(style.color.slice(5, 7), 16);
-    const css = `background-color: rgba( ${r}, ${g}, ${b}, 0.15)`;
-    return {
-      className: style.className,
-      title: style.displayName,
-      css
-    };
-  }
-
-  /**
-   * Construct a caret element representing the position
-   * of a collaborator's cursor.
-   */
-  private _getCaret(collaborator: ICollaborator): Private.CaretWidget {
-    return new Private.CaretWidget(collaborator, {
-      setHoverId: (sessionId: string) => {
-        this._clearHover();
-        this._hoverId = sessionId;
-      },
-      setHoverTimeout: () => {
-        this._hoverTimeout = window.setTimeout(() => {
-          this._clearHover();
-        }, HOVER_TIMEOUT);
-      },
-      clearHoverTimeout: () => {
-        window.clearTimeout(this._hoverTimeout);
-      }
-    });
-  }
-
-  /**
-   * Marks selections.
-   */
-  private _markSelections(
-    uuid: string,
-    selections: CodeEditor.ITextSelection[]
-  ) {
-    const sel = selections.map(selection => ({
-      from: this.getOffsetAt(selection.start),
-      to: this.getOffsetAt(selection.end),
-      style: selection.style
-    }));
-    this.editor.dispatch({
-      effects: this._addMark.of({ uuid: uuid, selections: sel })
-    });
+      });
   }
 
   /**
@@ -931,8 +655,7 @@ export class CodeMirrorEditor implements CodeEditor.IEditor {
     return {
       uuid: this.uuid,
       start: this._toPosition(selection.anchor),
-      end: this._toPosition(selection.head),
-      style: this.selectionStyle
+      end: this._toPosition(selection.head)
     };
   }
 
@@ -983,9 +706,6 @@ export class CodeMirrorEditor implements CodeEditor.IEditor {
       case 'blur':
         this._evtBlur(event as FocusEvent);
         break;
-      case 'scroll':
-        this._evtScroll();
-        break;
       default:
         break;
     }
@@ -1010,117 +730,31 @@ export class CodeMirrorEditor implements CodeEditor.IEditor {
     this.host.classList.remove('jp-mod-focused');
   }
 
-  /**
-   * Handle `scroll` events for the editor.
-   */
-  private _evtScroll(): void {
-    // Remove any active hover.
-    this._clearHover();
-  }
-
-  /**
-   * Clear the hover for a caret, due to things like
-   * scrolling, resizing, deactivation, etc, where
-   * the position is no longer valid.
-   */
-  private _clearHover(): void {
-    if (this._caretHover) {
-      window.clearTimeout(this._hoverTimeout);
-      document.body.removeChild(this._caretHover);
-      this._caretHover = null;
-    }
-  }
-
-  protected translator: ITranslator;
-  private _trans: TranslationBundle;
-  private _model: CodeEditor.IModel;
+  private _configurator: IExtensionsHandler;
   private _editor: EditorView;
-  private _selectionMarkers: {
-    [key: string]: Range<Decoration>[];
-  } = {};
-  private _caretHover: HTMLElement | null;
-  private _config: CodeMirrorEditor.IConfig;
-  private _hoverTimeout: number;
-  private _hoverId: string;
-  private _keydownHandlers = new Array<CodeEditor.KeydownHandler>();
-  private _selectionStyle: CodeEditor.ISelectionStyle;
-  private _uuid = '';
   private _isDisposed = false;
-  private _yeditorBinding: IYCodeMirrorBinding | null;
-  private _editorConfig: Configuration.EditorConfiguration;
-  private _addMark: StateEffectType<Private.ICollabSelectionText>;
-  private _removeMark: StateEffectType<Private.ICollabDecorationSet>;
-  private _markField: StateField<DecorationSet>;
+  private _language = new Compartment();
+  private _languages: IEditorLanguageRegistry;
+  private _model: CodeEditor.IModel;
+  private _uuid = '';
 }
 
 /**
  * The namespace for `CodeMirrorEditor` statics.
  */
 export namespace CodeMirrorEditor {
-  export interface IConfig extends Configuration.IConfig {}
   /**
    * The options used to initialize a code mirror editor.
    */
   export interface IOptions extends CodeEditor.IOptions {
     /**
-     * The configuration options for the editor.
+     * CodeMirror extensions registry
      */
-    config?: Partial<IConfig>;
-  }
-
-  /**
-   * The options used to set several options at once with reconfigure.
-   */
-  export interface IConfigOptions<K extends keyof IConfig> {
-    K: IConfig[K];
-  }
-
-  /**
-   * The default configuration options for an editor.
-   */
-  export const defaultConfig: Required<IConfig> = {
-    ...CodeEditor.defaultConfig,
-    mode: 'null',
-    theme: 'jupyter',
-    smartIndent: true,
-    electricChars: true,
-    keyMap: 'default',
-    extraKeys: null,
-    gutters: [],
-    fixedGutter: true,
-    showCursorWhenSelecting: false,
-    coverGutterNextToScrollbar: false,
-    dragDrop: true,
-    lineSeparator: null,
-    scrollbarStyle: 'native',
-    lineWiseCopyCut: true,
-    scrollPastEnd: false,
-    styleActiveLine: false,
-    styleSelectedText: true,
-    selectionPointer: false,
-    handlePaste: true
-  };
-
-  /**
-   * Indent or insert a tab as appropriate.
-   */
-  export function indentMoreOrInsertTab(target: {
-    state: EditorState;
-    dispatch: (transaction: Transaction) => void;
-  }): boolean {
-    const arg = { state: target.state, dispatch: target.dispatch };
-    const from = target.state.selection.main.from;
-    const to = target.state.selection.main.to;
-    if (from != to) {
-      return indentMore(arg);
-    }
-    const line = target.state.doc.lineAt(from);
-    const before = target.state.doc.slice(line.from, from).toString();
-    if (/^\s*$/.test(before)) {
-      return indentMore(arg);
-    } else {
-      return insertTab(arg);
-    }
+    extensionsRegistry?: IEditorExtensionRegistry;
+    /**
+     * CodeMirror languages registry
+     */
+    languages?: IEditorLanguageRegistry;
   }
 }
 
@@ -1130,21 +764,12 @@ export namespace CodeMirrorEditor {
 namespace Private {
   export function createEditor(
     host: HTMLElement,
-    config: CodeMirrorEditor.IConfig,
-    ybinding: IYCodeMirrorBinding | null,
-    editorConfig: Configuration.EditorConfiguration,
-    additionalExtensions: Extension[]
+    editorConfig: IExtensionsHandler,
+    additionalExtensions: Extension[],
+    doc?: string
   ): EditorView {
-    const extensions = editorConfig.getInitialExtensions(config);
-    if (ybinding) {
-      extensions.push(
-        yCollab(ybinding.text, ybinding.awareness, {
-          undoManager: ybinding.undoManager ?? false
-        })
-      );
-    }
+    const extensions = editorConfig.getInitialExtensions();
     extensions.push(...additionalExtensions);
-    const doc = ybinding?.text.toString();
     const view = new EditorView({
       state: EditorState.create({
         doc,
@@ -1153,83 +778,6 @@ namespace Private {
       parent: host
     });
 
-    if (config.readOnly) {
-      view.dom.classList.add(READ_ONLY_CLASS);
-    }
-
     return view;
-  }
-
-  export interface ISelectionText {
-    from: number;
-    to: number;
-    style: CodeEditor.ISelectionStyle;
-  }
-
-  export interface ICollabSelectionText {
-    uuid: string;
-    selections: ISelectionText[];
-  }
-
-  export interface ICollabDecorationSet {
-    uuid: string;
-    decorations: Range<Decoration>[];
-  }
-
-  export interface ICaretWidgetCallbacks {
-    setHoverId: (sessionId: string) => void;
-    setHoverTimeout: () => void;
-    clearHoverTimeout: () => void;
-  }
-
-  export class CaretWidget extends WidgetType {
-    constructor(
-      readonly collaborator: ICollaborator,
-      readonly callbacks: ICaretWidgetCallbacks
-    ) {
-      super();
-    }
-
-    eq(other: CaretWidget) {
-      return this.collaborator.sessionId == other.collaborator.sessionId;
-    }
-
-    toDOM() {
-      const caret: HTMLElement = document.createElement('span');
-      caret.className = COLLABORATOR_CURSOR_CLASS;
-      caret.style.borderBottomColor = this.collaborator.color;
-
-      // TODO: check if this should be replaced with
-      // a global event handler
-      caret.onmouseenter = () => {
-        this.callbacks.setHoverId(this.collaborator.sessionId);
-        const rect = caret.getBoundingClientRect();
-        // Construct and place the hover box.
-        const hover = document.createElement('div');
-        hover.className = COLLABORATOR_HOVER_CLASS;
-        hover.style.left = `${rect.left}px`;
-        hover.style.top = `${rect.bottom}px`;
-        hover.textContent = this.collaborator.displayName;
-        hover.style.backgroundColor = this.collaborator.color;
-
-        // If the user mouses over the hover, take over the timer.
-        hover.onmouseenter = () => {
-          this.callbacks.clearHoverTimeout();
-        };
-        hover.onmouseleave = () => {
-          this.callbacks.setHoverTimeout();
-        };
-      };
-
-      caret.onmouseleave = () => {
-        this.callbacks.setHoverTimeout();
-      };
-
-      return caret;
-    }
-
-    ignoreEvent() {
-      return false;
-    }
   }
 }

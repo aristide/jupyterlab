@@ -13,12 +13,9 @@ const packages = [
   'attachments',
   'cells',
   'celltags-extension',
-  'celltags',
   'codeeditor',
   'codemirror-extension',
   'codemirror',
-  'collaboration',
-  'collaboration-extension',
   'completer-extension',
   'completer',
   'console-extension',
@@ -28,8 +25,6 @@ const packages = [
   'csvviewer',
   'debugger-extension',
   'debugger',
-  'docprovider-extension',
-  'docprovider',
   'docmanager-extension',
   'docmanager',
   'docregistry',
@@ -60,8 +55,7 @@ const packages = [
   'mainmenu',
   'markdownviewer-extension',
   'markdownviewer',
-  'mathjax2-extension',
-  'mathjax2',
+  'mathjax-extension',
   // 'metapackage',
   // 'nbconvert-css',
   'nbformat',
@@ -80,7 +74,6 @@ const packages = [
   'settingeditor-extension',
   'settingeditor',
   'settingregistry',
-  'shared-models',
   'shortcuts-extension',
   'statedb',
   'statusbar-extension',
@@ -97,8 +90,6 @@ const packages = [
   'translation',
   'ui-components-extension',
   'ui-components',
-  'vdom-extension',
-  'vdom',
   'vega5-extension'
 ];
 
@@ -110,29 +101,14 @@ const entryPoints = packages
 
 const exclude =
   packages.flatMap(p => [`packages/${p}/test`]) +
-  [
-    'packages/application-extension/src/index.tsx',
-    'examples/example.spec.ts'
-    //'packages/*/test/*.spec.ts',
-  ];
+  ['packages/application-extension/src/index.tsx', 'examples/example.spec.ts'];
 
 module.exports = {
   entryPoints,
   exclude,
   name: '@jupyterlab',
   out: 'docs/api',
-  // json: 'docs/api.json',
   readme: 'README.md',
   theme: 'default',
   tsconfig: 'tsconfigdoc.json'
-  //plugin: "./typedoc-theme/lib/index.js"
-
-  // theme: minimal,
-  // excludePrivate: true,
-  // excludeProtected: true,
-  // excludeExternals: true,
-  // hideGenerator: true
-
-  // gitRevision: 'master',
-  // 'sourcefile-url-prefix': `https://github.com/sinnerschrader/feature-hub/tree/${git.short()}/packages/`,
 };

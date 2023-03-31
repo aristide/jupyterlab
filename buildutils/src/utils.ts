@@ -21,7 +21,12 @@ const backSlash = /\\/g;
  *  Exit with an error code on uncaught error.
  */
 export function exitOnUncaughtException(): void {
-  process.on('uncaughtException', function (err) {
+  process.on('uncaughtException', function (err: any) {
+    if (err.status || err.stdout || err.stderr) {
+      console.error(`Status: ${err.status}`);
+      console.error(`stdout: ${err.stdout?.toString()}`);
+      console.error(`stderr: ${err.stderr?.toString()}`);
+    }
     console.error('Uncaught exception', err);
     process.exit(1);
   });
@@ -63,7 +68,16 @@ export function getLernaPaths(basePath = '.'): string[] {
  */
 export function getCorePaths(): string[] {
   const spec = path.resolve(path.join('.', 'packages', '*'));
-  return glob.sync(spec);
+  return (
+    glob
+      .sync(spec)
+      // Git versioned only files - so we check for package.json
+      // to ensure a package really exists and is not a ghost from
+      // another branch
+      .filter(packagePath =>
+        fs.existsSync(path.join(packagePath, 'package.json'))
+      )
+  );
 }
 
 /**
@@ -228,11 +242,17 @@ export function prebump(): void {
     encoding: 'utf8'
   });
   if (status.length > 0) {
+    const diff = run('git diff', {
+      stdio: 'pipe',
+      encoding: 'utf8'
+    });
     throw new Error(
       `Must be in a clean git state with no untracked files.
 Run "git status" to see the issues.
 
-${status}`
+${status}
+
+${diff}`
     );
   }
 }

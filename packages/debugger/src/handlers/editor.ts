@@ -11,7 +11,7 @@ import { IDisposable } from '@lumino/disposable';
 
 import { Signal } from '@lumino/signaling';
 
-import { ISharedText, SourceChange } from '@jupyterlab/shared-models';
+import { ISharedText, SourceChange } from '@jupyter/ydoc';
 
 import {
   Compartment,
@@ -184,7 +184,7 @@ export class EditorHandler implements IDisposable {
    * Setup the editor.
    */
   private _setupEditor(): void {
-    const editor = this.editor as CodeMirrorEditor | null;
+    const editor = this.editor;
     if (!editor || editor.isDisposed) {
       return;
     }

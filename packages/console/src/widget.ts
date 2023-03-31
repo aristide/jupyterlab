@@ -1,6 +1,9 @@
 // Copyright (c) Jupyter Development Team.
 // Distributed under the terms of the Modified BSD License.
 
+import { Prec } from '@codemirror/state';
+import { EditorView } from '@codemirror/view';
+import { createStandaloneCell, ISharedRawCell } from '@jupyter/ydoc';
 import { ISessionContext } from '@jupyterlab/apputils';
 import {
   AttachmentsCellModel,
@@ -14,15 +17,12 @@ import {
   RawCell,
   RawCellModel
 } from '@jupyterlab/cells';
-import { CodeEditor, IEditorMimeTypeService } from '@jupyterlab/codeeditor';
+import { IEditorMimeTypeService } from '@jupyterlab/codeeditor';
 import * as nbformat from '@jupyterlab/nbformat';
 import { IObservableList, ObservableList } from '@jupyterlab/observables';
 import { IRenderMimeRegistry } from '@jupyterlab/rendermime';
 import { KernelMessage } from '@jupyterlab/services';
-import {
-  createStandaloneCell,
-  ISharedRawCell
-} from '@jupyterlab/shared-models';
+import { ITranslator, nullTranslator } from '@jupyterlab/translation';
 import { JSONObject, MimeData } from '@lumino/coreutils';
 import { Drag } from '@lumino/dragdrop';
 import { Message } from '@lumino/messaging';
@@ -93,6 +93,7 @@ export class CodeConsole extends Widget {
    */
   constructor(options: CodeConsole.IOptions) {
     super();
+    this._translator = options.translator ?? nullTranslator;
     this.addClass(CONSOLE_CLASS);
     this.node.dataset[KERNEL_USER] = 'true';
     this.node.dataset[CODE_RUNNER] = 'true';
@@ -104,9 +105,8 @@ export class CodeConsole extends Widget {
     this._content = new Panel();
     this._input = new Panel();
 
-    this.contentFactory =
-      options.contentFactory || CodeConsole.defaultContentFactory;
-    this.modelFactory = options.modelFactory || CodeConsole.defaultModelFactory;
+    this.contentFactory = options.contentFactory;
+    this.modelFactory = options.modelFactory ?? CodeConsole.defaultModelFactory;
     this.rendermime = options.rendermime;
     this.sessionContext = options.sessionContext;
     this._mimeTypeService = options.mimeTypeService;
@@ -169,7 +169,7 @@ export class CodeConsole extends Widget {
   /**
    * The configuration options for the text editor widget.
    */
-  editorConfig?: Partial<CodeEditor.IConfig>;
+  editorConfig: Record<string, any> = CodeConsole.defaultEditorConfig;
 
   /**
    * The list of content cells in the console.
@@ -235,7 +235,24 @@ export class CodeConsole extends Widget {
     const banner = (this._banner = new RawCell({
       model,
       contentFactory: this.contentFactory,
-      placeholder: false
+      placeholder: false,
+      editorConfig: {
+        autoClosingBrackets: false,
+        codeFolding: false,
+        highlightActiveLine: false,
+        highlightTrailingWhitespace: false,
+        highlightWhitespace: false,
+        indentUnit: '2',
+        lineNumbers: false,
+        lineWrap: true,
+        matchBrackets: false,
+        readOnly: true,
+        rulers: [],
+        scrollPastEnd: false,
+        smartIndent: false,
+        tabSize: 4,
+        theme: 'jupyter'
+      }
     })).initializeState();
     banner.addClass(BANNER_CLASS);
     banner.readOnly = true;
@@ -343,7 +360,7 @@ export class CodeConsole extends Widget {
     const cell = this.createCodeCell();
     cell.model.sharedModel.setSource(code);
     for (const key of Object.keys(metadata)) {
-      cell.model.metadata.set(key, metadata[key]);
+      cell.model.setMetadata(key, metadata[key]);
     }
     this.addCell(cell);
     return this._execute(cell);
@@ -603,11 +620,7 @@ export class CodeConsole extends Widget {
     // Add the prompt cell to the DOM, making `this.promptCell` valid again.
     this._input.addWidget(promptCell);
 
-    // Suppress the default "Enter" key handling.
-    const editor = promptCell.editor;
-    editor!.addKeydownHandler(this._onEditorKeydown);
-
-    this._history.editor = editor;
+    this._history.editor = promptCell.editor;
     this._promptCellCreated.emit(promptCell);
   }
 
@@ -730,12 +743,26 @@ export class CodeConsole extends Widget {
     const model = modelFactory.createCodeCell({});
     const rendermime = this.rendermime;
     const editorConfig = this.editorConfig;
+
+    // Suppress the default "Enter" key handling.
+    const onKeyDown = EditorView.domEventHandlers({
+      keydown: (event: KeyboardEvent, view: EditorView) => {
+        if (event.keyCode === 13) {
+          event.preventDefault();
+          return true;
+        }
+        return false;
+      }
+    });
+
     return {
       model,
       rendermime,
       contentFactory,
       editorConfig,
-      placeholder: false
+      editorExtensions: [Prec.high(onKeyDown)],
+      placeholder: false,
+      translator: this._translator
     };
   }
 
@@ -792,14 +819,6 @@ export class CodeConsole extends Widget {
   }
 
   /**
-   * Handle a keydown event on an editor.
-   */
-  private _onEditorKeydown(editor: CodeEditor.IEditor, event: KeyboardEvent) {
-    // Suppress "Enter" events.
-    return event.keyCode === 13;
-  }
-
-  /**
    * Handle a change to the kernel.
    */
   private async _onKernelChanged(): Promise<void> {
@@ -843,6 +862,7 @@ export class CodeConsole extends Widget {
   } | null = null;
   private _drag: Drag | null = null;
   private _focusedCell: Cell | null = null;
+  private _translator: ITranslator;
 }
 
 /**
@@ -877,7 +897,20 @@ export namespace CodeConsole {
      * The service used to look up mime types.
      */
     mimeTypeService: IEditorMimeTypeService;
+
+    /**
+     * The application language translator.
+     */
+    translator?: ITranslator;
   }
+
+  /**
+   * Default console editor configuration
+   */
+  export const defaultEditorConfig: Record<string, any> = {
+    codeFolding: false,
+    lineNumbers: false
+  };
 
   /**
    * A content factory for console children.
@@ -909,9 +942,6 @@ export namespace CodeConsole {
      * notebook content factory is used.
      */
     createCodeCell(options: CodeCell.IOptions): CodeCell {
-      if (!options.contentFactory) {
-        options.contentFactory = this;
-      }
       return new CodeCell(options).initializeState();
     }
 
@@ -923,9 +953,6 @@ export namespace CodeConsole {
      * notebook content factory is used.
      */
     createRawCell(options: RawCell.IOptions): RawCell {
-      if (!options.contentFactory) {
-        options.contentFactory = this;
-      }
       return new RawCell(options).initializeState();
     }
   }
@@ -939,11 +966,6 @@ export namespace CodeConsole {
      */
     export interface IOptions extends Cell.IContentFactory {}
   }
-
-  /**
-   * A default content factory for the code console.
-   */
-  export const defaultContentFactory: IContentFactory = new ContentFactory();
 
   /**
    * A model factory for a console widget.
@@ -996,13 +1018,11 @@ export namespace CodeConsole {
 
     /**
      * Create a new code cell.
-     *
-     * @param source - The data to use for the original source data.
-     *
+     * @param options - The data to use for the original source data.
      * @returns A new code cell. If a source cell is provided, the
-     *   new cell will be initialized with the data from the source.
-     *   If the contentFactory is not provided, the instance
-     *   `codeCellContentFactory` will be used.
+    new cell will be initialized with the data from the source.
+    If the contentFactory is not provided, the instance
+    `codeCellContentFactory` will be used.
      */
     createCodeCell(options: CodeCellModel.IOptions = {}): ICodeCellModel {
       if (!options.contentFactory) {
@@ -1013,11 +1033,9 @@ export namespace CodeConsole {
 
     /**
      * Create a new raw cell.
-     *
-     * @param source - The data to use for the original source data.
-     *
+     * @param options - The data to use for the original source data.
      * @returns A new raw cell. If a source cell is provided, the
-     *   new cell will be initialized with the data from the source.
+    new cell will be initialized with the data from the source.
      */
     createRawCell(
       options: AttachmentsCellModel.IOptions<ISharedRawCell>

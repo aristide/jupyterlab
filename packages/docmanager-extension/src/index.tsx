@@ -20,11 +20,12 @@ import {
   InputDialog,
   ISessionContextDialogs,
   ReactWidget,
+  SessionContextDialogs,
   showDialog,
   showErrorMessage,
   UseSignal
 } from '@jupyterlab/apputils';
-import { IChangedArgs, PageConfig, PathExt, Time } from '@jupyterlab/coreutils';
+import { IChangedArgs, PathExt, Time } from '@jupyterlab/coreutils';
 import {
   DocumentManager,
   IDocumentManager,
@@ -33,7 +34,6 @@ import {
   renameDialog,
   SavingStatus
 } from '@jupyterlab/docmanager';
-import { IDocumentProviderFactory } from '@jupyterlab/docprovider';
 import { DocumentRegistry, IDocumentWidget } from '@jupyterlab/docregistry';
 import { Contents, Kernel } from '@jupyterlab/services';
 import { ISettingRegistry } from '@jupyterlab/settingregistry';
@@ -164,23 +164,19 @@ const manager: JupyterFrontEndPlugin<IDocumentManager> = {
   id: '@jupyterlab/docmanager-extension:manager',
   provides: IDocumentManager,
   requires: [IDocumentWidgetOpener],
-  optional: [
-    ITranslator,
-    ILabStatus,
-    ISessionContextDialogs,
-    IDocumentProviderFactory,
-    JupyterLab.IInfo
-  ],
+  optional: [ITranslator, ILabStatus, ISessionContextDialogs, JupyterLab.IInfo],
   activate: (
     app: JupyterFrontEnd,
     widgetOpener: IDocumentWidgetOpener,
-    translator: ITranslator | null,
+    translator_: ITranslator | null,
     status: ILabStatus | null,
-    sessionDialogs: ISessionContextDialogs | null,
-    docProviderFactory: IDocumentProviderFactory | null,
+    sessionDialogs_: ISessionContextDialogs | null,
     info: JupyterLab.IInfo | null
   ) => {
     const { serviceManager: manager, docRegistry: registry } = app;
+    const translator = translator_ ?? nullTranslator;
+    const sessionDialogs =
+      sessionDialogs_ ?? new SessionContextDialogs({ translator });
     const when = app.restored.then(() => void 0);
 
     const docManager = new DocumentManager({
@@ -189,10 +185,8 @@ const manager: JupyterFrontEndPlugin<IDocumentManager> = {
       opener: widgetOpener,
       when,
       setBusy: (status && (() => status.setBusy())) ?? undefined,
-      sessionDialogs: sessionDialogs || undefined,
+      sessionDialogs,
       translator: translator ?? nullTranslator,
-      collaborative: true,
-      docProviderFactory: docProviderFactory ?? undefined,
       isConnectedCallback: () => {
         if (info) {
           return info.isConnected;
@@ -245,6 +239,10 @@ const docManagerPlugin: JupyterFrontEndPlugin<void> = {
         autosave === true || autosave === false ? autosave : true;
       app.commands.notifyCommandChanged(CommandIDs.toggleAutosave);
 
+      const confirmClosingDocument = settings.get('confirmClosingDocument')
+        .composite as boolean;
+      docManager.confirmClosingDocument = confirmClosingDocument ?? true;
+
       // Handle autosave interval
       const autosaveInterval = settings.get('autosaveInterval').composite as
         | number
@@ -296,6 +294,29 @@ const docManagerPlugin: JupyterFrontEndPlugin<void> = {
       .then(([settings]) => {
         settings.changed.connect(onSettingsUpdated);
         onSettingsUpdated(settings);
+
+        const onStateChanged = (
+          sender: IDocumentManager,
+          change: IChangedArgs<any>
+        ): void => {
+          if (
+            [
+              'autosave',
+              'autosaveInterval',
+              'confirmClosingDocument',
+              'lastModifiedCheckMargin',
+              'renameUntitledFileOnSave'
+            ].includes(change.name) &&
+            settings.get(change.name).composite !== change.newValue
+          ) {
+            settings.set(change.name, change.newValue).catch(reason => {
+              console.error(
+                `Failed to set the setting '${change.name}':\n${reason}`
+              );
+            });
+          }
+        };
+        docManager.stateChanged.connect(onStateChanged);
       })
       .catch((reason: Error) => {
         console.error(reason.message);
@@ -612,11 +633,7 @@ function addCommands(
       return false;
     }
     const context = docManager.contextForWidget(currentWidget);
-    return !!(
-      context &&
-      context.contentsModel &&
-      context.contentsModel.writable
-    );
+    return !!context?.contentsModel?.writable;
   };
 
   // If inside a rich application like JupyterLab, add additional functionality.
@@ -787,13 +804,16 @@ function addCommands(
   });
 
   const caption = () => {
-    if (PageConfig.getOption('collaborative') == 'true') {
-      return trans.__(
-        'In collaborative mode, the document is saved automatically after every change'
-      );
-    } else {
-      return trans.__('Save and create checkpoint');
+    if (shell.currentWidget) {
+      const context = docManager.contextForWidget(shell.currentWidget);
+      if (context?.model.collaborative) {
+        return trans.__(
+          'In collaborative mode, the document is saved automatically after every change'
+        );
+      }
     }
+
+    return trans.__('Save and create checkpoint');
   };
 
   const saveInProgress = new WeakSet<DocumentRegistry.Context>();
@@ -843,7 +863,7 @@ function addCommands(
               text: oldName,
               selectionRange: oldName.length - PathExt.extname(oldName).length,
               checkbox: {
-                label: trans.__("Don't ask me again."),
+                label: trans.__('Do not ask me again.'),
                 caption: trans.__(
                   'If checked, you will not be asked to rename future untitled files when saving them.'
                 )
@@ -939,7 +959,28 @@ function addCommands(
             buttons: [Dialog.okButton()]
           });
         }
-        return context.saveAs();
+
+        const onChange = (
+          sender: Contents.IManager,
+          args: Contents.IChangedArgs
+        ) => {
+          if (
+            args.type === 'save' &&
+            args.newValue &&
+            args.newValue.path !== context.path
+          ) {
+            void docManager.closeFile(context.path);
+            void commands.execute(CommandIDs.open, {
+              path: args.newValue.path
+            });
+          }
+        };
+        docManager.services.contents.fileChanged.connect(onChange);
+        context
+          .saveAs()
+          .finally(() =>
+            docManager.services.contents.fileChanged.disconnect(onChange)
+          );
       }
     }
   });
@@ -1172,10 +1213,7 @@ namespace Private {
     const date = new Date(checkpoint.last_modified);
     lastCheckpointDate.style.textAlign = 'center';
     lastCheckpointDate.textContent =
-      Time.format(date, 'dddd, MMMM Do YYYY, h:mm:ss a') +
-      ' (' +
-      Time.formatHuman(date) +
-      ')';
+      Time.format(date) + ' (' + Time.formatHuman(date) + ')';
 
     lastCheckpointMessage.appendChild(lastCheckpointText);
     lastCheckpointMessage.appendChild(lastCheckpointDate);

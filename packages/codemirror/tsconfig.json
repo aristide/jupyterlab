@@ -4,7 +4,7 @@
     "outDir": "lib",
     "rootDir": "src"
   },
-  "include": ["src/*"],
+  "include": ["src/**/*"],
   "references": [
     {
       "path": "../codeeditor"
@@ -19,19 +19,7 @@
       "path": "../nbformat"
     },
     {
-      "path": "../observables"
-    },
-    {
-      "path": "../shared-models"
-    },
-    {
-      "path": "../statusbar"
-    },
-    {
       "path": "../translation"
-    },
-    {
-      "path": "../ui-components"
     }
   ]
 }

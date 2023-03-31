@@ -42,13 +42,12 @@ function getExtensionGitHubUser(entry: IEntry) {
  * VDOM for visualizing an extension entry.
  */
 function ListEntry(props: ListEntry.IProperties): React.ReactElement<any> {
-  const { entry, supportInstallation, trans } = props;
+  const { canFetch, entry, supportInstallation, trans } = props;
   const flagClasses = [];
   if (entry.status && ['ok', 'warning', 'error'].indexOf(entry.status) !== -1) {
     flagClasses.push(`jp-extensionmanager-entry-${entry.status}`);
   }
-  const title = entry.name;
-  const githubUser = getExtensionGitHubUser(entry);
+  const githubUser = canFetch ? getExtensionGitHubUser(entry) : null;
 
   if (!entry.allowed) {
     flagClasses.push(`jp-extensionmanager-entry-should-be-uninstalled`);
@@ -57,7 +56,6 @@ function ListEntry(props: ListEntry.IProperties): React.ReactElement<any> {
   return (
     <li
       className={`jp-extensionmanager-entry ${flagClasses.join(' ')}`}
-      title={title}
       style={{ display: 'flex' }}
     >
       <div style={{ marginRight: '8px' }}>
@@ -80,6 +78,7 @@ function ListEntry(props: ListEntry.IProperties): React.ReactElement<any> {
                 href={entry.homepage_url}
                 target="_blank"
                 rel="noopener noreferrer"
+                title={trans.__('%1 extension home page', entry.name)}
               >
                 {entry.name}
               </a>
@@ -87,11 +86,16 @@ function ListEntry(props: ListEntry.IProperties): React.ReactElement<any> {
               <div>{entry.name}</div>
             )}
           </div>
+          <div className="jp-extensionmanager-entry-version">
+            <div title={trans.__('Version: %1', entry.installed_version)}>
+              {entry.installed_version}
+            </div>
+          </div>
           {entry.installed && !entry.allowed && (
             <ToolbarButtonComponent
               icon={infoIcon}
               iconLabel={trans.__(
-                '%1 extension is not allowed any more. Please uninstall immediately or contact your administrator.',
+                '%1 extension is not allowed anymore. Please uninstall it immediately or contact your administrator.',
                 entry.name
               )}
               onClick={() =>
@@ -126,14 +130,20 @@ function ListEntry(props: ListEntry.IProperties): React.ReactElement<any> {
                       {ListModel.entryHasUpdate(entry) && (
                         <Button
                           onClick={() => props.performAction!('install', entry)}
+                          title={trans.__(
+                            'Update "%1" to "%2"',
+                            entry.name,
+                            entry.latest_version
+                          )}
                           minimal
                           small
                         >
-                          {trans.__('Update')}
+                          {trans.__('Update to %1', entry.latest_version)}
                         </Button>
                       )}
                       <Button
                         onClick={() => props.performAction!('uninstall', entry)}
+                        title={trans.__('Uninstall "%1"', entry.name)}
                         minimal
                         small
                       >
@@ -144,6 +154,7 @@ function ListEntry(props: ListEntry.IProperties): React.ReactElement<any> {
                   {entry.enabled ? (
                     <Button
                       onClick={() => props.performAction!('disable', entry)}
+                      title={trans.__('Disable "%1"', entry.name)}
                       minimal
                       small
                     >
@@ -152,6 +163,7 @@ function ListEntry(props: ListEntry.IProperties): React.ReactElement<any> {
                   ) : (
                     <Button
                       onClick={() => props.performAction!('enable', entry)}
+                      title={trans.__('Enable "%1"', entry.name)}
                       minimal
                       small
                     >
@@ -163,6 +175,7 @@ function ListEntry(props: ListEntry.IProperties): React.ReactElement<any> {
                 supportInstallation && (
                   <Button
                     onClick={() => props.performAction!('install', entry)}
+                    title={trans.__('Install "%1"', entry.name)}
                     minimal
                     small
                   >
@@ -183,6 +196,11 @@ function ListEntry(props: ListEntry.IProperties): React.ReactElement<any> {
  */
 namespace ListEntry {
   export interface IProperties {
+    /**
+     * Whether thumbnails can be fetched from external webservices or not.
+     */
+    canFetch: boolean;
+
     /**
      * The entry to visualize.
      */
@@ -211,7 +229,7 @@ namespace ListEntry {
  * List view widget for extensions
  */
 function ListView(props: ListView.IProperties): React.ReactElement<any> {
-  const { trans } = props;
+  const { canFetch, performAction, supportInstallation, trans } = props;
 
   return (
     <div className="jp-extensionmanager-listview-wrapper">
@@ -220,9 +238,10 @@ function ListView(props: ListView.IProperties): React.ReactElement<any> {
           {props.entries.map(entry => (
             <ListEntry
               key={entry.name}
+              canFetch={canFetch}
               entry={entry}
-              performAction={props.performAction}
-              supportInstallation={props.supportInstallation}
+              performAction={performAction}
+              supportInstallation={supportInstallation}
               trans={trans}
             />
           ))}
@@ -237,16 +256,15 @@ function ListView(props: ListView.IProperties): React.ReactElement<any> {
           <ReactPaginate
             previousLabel={'<'}
             nextLabel={'>'}
-            breakLabel={<a href="">...</a>}
-            breakClassName={'break-me'}
+            breakLabel="..."
+            breakClassName={'break'}
             initialPage={(props.initialPage ?? 1) - 1}
             pageCount={props.numPages}
             marginPagesDisplayed={2}
-            pageRangeDisplayed={5}
+            pageRangeDisplayed={3}
             onPageChange={(data: { selected: number }) =>
               props.onPage(data.selected + 1)
             }
-            containerClassName={'pagination'}
             activeClassName={'active'}
           />
         </div>
@@ -260,6 +278,11 @@ function ListView(props: ListView.IProperties): React.ReactElement<any> {
  */
 namespace ListView {
   export interface IProperties {
+    /**
+     * Whether thumbnails can be fetched from external webservices or not.
+     */
+    canFetch: boolean;
+
     /**
      * The extension entries to display.
      */
@@ -378,7 +401,17 @@ class Warning extends ReactWidget {
             .__(`The JupyterLab development team is excited to have a robust
 third-party extension community. However, we do not review
 third-party extensions, and some extensions may introduce security
-risks or contain malicious code that runs on your machine.`)}
+risks or contain malicious code that runs on your machine. Moreover in order
+to work, this panel needs to fetch data from web services. Do you agree to
+activate this feature?`)}
+          <br />
+          <a
+            href="https://jupyterlab.readthedocs.io/en/latest/privacy_policies.html"
+            target="_blank"
+            rel="noreferrer"
+          >
+            {this.trans.__('Please read the privacy policy.')}
+          </a>
         </p>
         {this.model.isDisclaimed ? (
           <Button
@@ -386,18 +419,32 @@ risks or contain malicious code that runs on your machine.`)}
             onClick={(e: React.MouseEvent<Element, MouseEvent>) => {
               this.model.isDisclaimed = false;
             }}
+            title={this.trans.__('This will withdraw your consent.')}
           >
-            {this.trans.__('Disable')}
+            {this.trans.__('No')}
           </Button>
         ) : (
-          <Button
-            className="jp-extensionmanager-disclaimer-enable"
-            onClick={(e: React.MouseEvent<Element, MouseEvent>) => {
-              this.model.isDisclaimed = true;
-            }}
-          >
-            {this.trans.__('Enable')}
-          </Button>
+          <div>
+            <Button
+              className="jp-extensionmanager-disclaimer-enable"
+              onClick={() => {
+                this.model.isDisclaimed = true;
+              }}
+            >
+              {this.trans.__('Yes')}
+            </Button>
+            <Button
+              className="jp-extensionmanager-disclaimer-disable"
+              onClick={() => {
+                this.model.isEnabled = false;
+              }}
+              title={this.trans.__(
+                'This will disable the extension manager panel; including the listing of installed extension.'
+              )}
+            >
+              {this.trans.__('No, disable')}
+            </Button>
+          </div>
         )}
       </>
     );
@@ -425,6 +472,7 @@ class InstalledList extends ReactWidget {
           </div>
         ) : (
           <ListView
+            canFetch={this.model.isDisclaimed}
             entries={this.model.installed.filter(pkg =>
               new RegExp(this.model.query.toLowerCase()).test(pkg.name)
             )}
@@ -518,6 +566,7 @@ class SearchResult extends ReactWidget {
           </div>
         ) : (
           <ListView
+            canFetch={this.model.isDisclaimed}
             entries={this.model.searchResult}
             initialPage={this.model.page}
             numPages={this.model.lastPage}
@@ -609,7 +658,7 @@ export class ExtensionsPanel extends SidePanel {
       (this.content as AccordionPanel).collapse(2);
     }
 
-    this.model.stateChanged.connect(this._onDisclaimedChanged, this);
+    this.model.stateChanged.connect(this._onStateChanged, this);
   }
 
   /**
@@ -619,7 +668,7 @@ export class ExtensionsPanel extends SidePanel {
     if (this.isDisposed) {
       return;
     }
-    this.model.stateChanged.disconnect(this._onDisclaimedChanged, this);
+    this.model.stateChanged.disconnect(this._onStateChanged, this);
     super.dispose();
   }
 
@@ -685,13 +734,13 @@ export class ExtensionsPanel extends SidePanel {
     super.onActivateRequest(msg);
   }
 
-  private _onDisclaimedChanged(): void {
+  private _onStateChanged(): void {
     if (!this._wasDisclaimed && this.model.isDisclaimed) {
       (this.content as AccordionPanel).collapse(0);
       (this.content as AccordionPanel).expand(1);
       (this.content as AccordionPanel).expand(2);
-      (this.content.layout as AccordionLayout).setRelativeSizes([0, 1, 1]);
     }
+    this._wasDisclaimed = this.model.isDisclaimed;
   }
 
   /**

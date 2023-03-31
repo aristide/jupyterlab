@@ -45,8 +45,8 @@ const MISSING: Dict<string[]> = {
   '@jupyterlab/coreutils': ['path'],
   '@jupyterlab/buildutils': ['path', 'webpack'],
   '@jupyterlab/builder': ['path'],
-  '@jupyterlab/galata': ['fs', 'path'],
-  '@jupyterlab/testutils': ['fs', 'path'],
+  '@jupyterlab/galata': ['fs', 'path', '@jupyterlab/galata'],
+  '@jupyterlab/testing': ['fs', 'path'],
   '@jupyterlab/vega5-extension': ['vega-embed']
 };
 
@@ -71,17 +71,16 @@ const UNUSED: Dict<string[]> = {
     // The libraries needed for building other extensions.
     '@babel/core',
     '@babel/preset-env',
-    'babel-loader',
     'css-loader',
     'path-browserify',
     'process',
     'style-loader',
     'terser-webpack-plugin',
-    'to-string-loader',
     'webpack-cli',
-    'worker-loader'
+    'worker-loader',
+    'source-map-loader'
   ],
-  '@jupyterlab/buildutils': ['verdaccio'],
+  '@jupyterlab/buildutils': ['inquirer', 'verdaccio'],
   '@jupyterlab/codemirror': [
     '@codemirror/lang-cpp',
     '@codemirror/lang-css',
@@ -95,20 +94,26 @@ const UNUSED: Dict<string[]> = {
     '@codemirror/lang-rust',
     '@codemirror/lang-sql',
     '@codemirror/lang-wast',
-    '@codemirror/lang-xml'
+    '@codemirror/lang-xml',
+    '@codemirror/legacy-modes'
   ],
   '@jupyterlab/coreutils': ['path-browserify'],
   '@jupyterlab/fileeditor': ['regexp-match-indices'],
-  '@jupyterlab/galata': ['node-fetch', 'http-server'],
-  '@jupyterlab/services': ['node-fetch', 'ws'],
-  '@jupyterlab/rendermime': ['@jupyterlab/mathjax2'],
-  '@jupyterlab/testutils': [
+  '@jupyterlab/services': ['ws'],
+  '@jupyterlab/testing': [
+    '@babel/core',
+    '@babel/preset-env',
     'fs-extra',
     'node-fetch',
     'identity-obj-proxy',
-    'jest-raw-loader',
-    'jest-junit',
-    'jest-summary-reporter'
+    'jest-environment-jsdom',
+    'jest-junit'
+  ],
+  '@jupyterlab/testutils': [
+    '@jupyterlab/application',
+    '@jupyterlab/apputils',
+    '@jupyterlab/notebook',
+    '@jupyterlab/rendermime'
   ],
   '@jupyterlab/test-csvviewer': ['csv-spectrum'],
   '@jupyterlab/vega5-extension': ['vega', 'vega-lite']
@@ -150,6 +155,19 @@ const SKIP_CSS: Dict<string[]> = {
   ],
   '@jupyterlab/filebrowser': ['@jupyterlab/statusbar'],
   '@jupyterlab/fileeditor': ['@jupyterlab/statusbar'],
+  '@jupyterlab/galata': [
+    '@jupyterlab/application',
+    '@jupyterlab/apputils',
+    '@jupyterlab/docmanager',
+    '@jupyterlab/notebook'
+  ],
+  '@jupyterlab/galata-extension': [
+    '@jupyterlab/application',
+    '@jupyterlab/apputils',
+    '@jupyterlab/cells',
+    '@jupyterlab/docmanager',
+    '@jupyterlab/notebook'
+  ],
   '@jupyterlab/help-extension': ['@jupyterlab/application'],
   '@jupyterlab/lsp': ['codemirror'],
   '@jupyterlab/metapackage': [
@@ -174,7 +192,6 @@ const SKIP_CSS: Dict<string[]> = {
     '@jupyterlab/notebook',
     '@jupyterlab/cell-toolbar',
     '@jupyterlab/cell-toolbar-extension',
-    '@jupyterlab/celltags',
     '@jupyterlab/celltags-extension',
     '@jupyterlab/fileeditor',
     '@jupyterlab/codemirror-extension',
@@ -185,12 +202,10 @@ const SKIP_CSS: Dict<string[]> = {
     '@jupyterlab/console-extension',
     '@jupyterlab/csvviewer',
     '@jupyterlab/documentsearch',
-    '@jupyterlab/docprovider',
     '@jupyterlab/csvviewer-extension',
     '@jupyterlab/debugger',
     '@jupyterlab/debugger-extension',
     '@jupyterlab/docmanager-extension',
-    '@jupyterlab/docprovider-extension',
     '@jupyterlab/documentsearch-extension',
     '@jupyterlab/extensionmanager',
     '@jupyterlab/extensionmanager-extension',
@@ -215,8 +230,9 @@ const SKIP_CSS: Dict<string[]> = {
     '@jupyterlab/markdownviewer',
     '@jupyterlab/markdownviewer-extension',
     '@jupyterlab/markedparser-extension',
-    '@jupyterlab/mathjax2',
-    '@jupyterlab/mathjax2-extension',
+    '@jupyterlab/mathjax-extension',
+    '@jupyterlab/metadataform',
+    '@jupyterlab/metadataform-extension',
     '@jupyterlab/nbconvert-css',
     '@jupyterlab/notebook-extension',
     '@jupyterlab/pdf-extension',
@@ -237,22 +253,17 @@ const SKIP_CSS: Dict<string[]> = {
     '@jupyterlab/tooltip-extension',
     '@jupyterlab/translation-extension',
     '@jupyterlab/ui-components-extension',
-    '@jupyterlab/collaboration',
-    '@jupyterlab/collaboration-extension',
-    '@jupyterlab/vdom',
-    '@jupyterlab/vdom-extension',
     '@jupyterlab/vega5-extension'
   ],
+  '@jupyterlab/notebook': ['@jupyterlab/application'],
   '@jupyterlab/rendermime-interfaces': ['@lumino/widgets'],
   '@jupyterlab/shortcuts-extension': ['@jupyterlab/application'],
   '@jupyterlab/testutils': [
+    '@jupyterlab/application',
     '@jupyterlab/apputils',
-    '@jupyterlab/codeeditor',
-    '@jupyterlab/codemirror',
+    '@jupyterlab/notebook',
     '@jupyterlab/rendermime',
-    '@jupyterlab/docregistry',
-    '@jupyterlab/cells',
-    '@jupyterlab/notebook'
+    '@jupyterlab/testing'
   ],
   '@jupyterlab/theme-light-extension': [
     '@jupyterlab/application',
@@ -387,7 +398,7 @@ function ensureMetaPackage(): string[] {
     let valid = true;
 
     // Ensure it is a dependency.
-    if (!mpData.dependencies[name]) {
+    if (!mpData.dependencies[name] && name !== '@jupyterlab/testing') {
       valid = false;
       mpData.dependencies[name] = '^' + data.version;
     }
@@ -560,7 +571,10 @@ function ensureJupyterlab(): string[] {
   const corePackage = utils.readJSONFile(corePath);
   const corePaths = utils.getCorePaths();
 
-  ensureCorePackage(corePackage, corePaths);
+  ensureCorePackage(
+    corePackage,
+    corePaths.filter(p => !/\/packages\/testing$/.test(p))
+  );
   corePackage.jupyterlab.mimeExtensions = {};
 
   const coreData = getCoreData(corePaths);
@@ -844,7 +858,8 @@ export async function ensureIntegrity(): Promise<boolean> {
   const tsConfigDocExclude = [
     'application-extension',
     'metapackage',
-    'nbconvert-css'
+    'nbconvert-css',
+    'testing'
   ];
   const tsConfigdocPath = path.resolve('.', 'tsconfigdoc.json');
   const tsConfigdocData = utils.readJSONFile(tsConfigdocPath);

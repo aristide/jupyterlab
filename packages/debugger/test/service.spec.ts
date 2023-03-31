@@ -1,17 +1,11 @@
 // Copyright (c) Jupyter Development Team.
 // Distributed under the terms of the Modified BSD License.
 
-import { init } from './utils';
-
-init();
-
 import { KernelSpec, KernelSpecManager, Session } from '@jupyterlab/services';
 
-import {
-  createSession,
-  JupyterServer,
-  signalToPromise
-} from '@jupyterlab/testutils';
+import { createSession } from '@jupyterlab/docregistry/lib/testutils';
+
+import { JupyterServer, signalToPromise } from '@jupyterlab/testing';
 
 import { JSONExt, UUID } from '@lumino/coreutils';
 
@@ -41,9 +35,8 @@ class TestKernelSpecManager extends KernelSpecManager {
 const server = new JupyterServer();
 
 beforeAll(async () => {
-  jest.setTimeout(20000);
   await server.start();
-});
+}, 30000);
 
 afterAll(async () => {
   await server.shutdown();
@@ -101,8 +94,8 @@ describe('DebuggerService', () => {
       path: UUID.uuid4()
     });
     await connection.changeKernel({ name: 'python3' });
-    session = new Debugger.Session({ connection });
     config = new Debugger.Config();
+    session = new Debugger.Session({ connection, config });
     service = new Debugger.Service({ specsManager, config });
   });
 

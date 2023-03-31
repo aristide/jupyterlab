@@ -1,8 +1,10 @@
 // Copyright (c) Jupyter Development Team.
 // Distributed under the terms of the Modified BSD License.
 
-import { LabShell } from '@jupyterlab/application';
-import { framePromise } from '@jupyterlab/testutils';
+import { LabShell, LayoutRestorer } from '@jupyterlab/application';
+import { StateDB } from '@jupyterlab/statedb';
+import { framePromise } from '@jupyterlab/testing';
+import { CommandRegistry } from '@lumino/commands';
 import { Message } from '@lumino/messaging';
 import { DockPanel, Widget } from '@lumino/widgets';
 import { simulate } from 'simulate-event';
@@ -116,9 +118,13 @@ describe('LabShell', () => {
 
   describe('#restored', () => {
     it('should resolve when the app is restored for the first time', async () => {
-      const state = shell.saveLayout();
+      const restorer = new LayoutRestorer({
+        connector: new StateDB(),
+        first: Promise.resolve<void>(void 0),
+        registry: new CommandRegistry()
+      });
       const mode: DockPanel.Mode = 'multiple-document';
-      shell.restoreLayout(mode, state);
+      await shell.restoreLayout(mode, restorer);
       await expect(shell.restored).resolves.not.toThrow();
     });
   });
@@ -425,11 +431,15 @@ describe('LabShell', () => {
   });
 
   describe('#restoreLayout', () => {
-    it('should restore the layout of the shell', () => {
-      const state = shell.saveLayout();
+    it('should restore the layout of the shell', async () => {
+      const restorer = new LayoutRestorer({
+        connector: new StateDB(),
+        first: Promise.resolve<void>(void 0),
+        registry: new CommandRegistry()
+      });
       const mode: DockPanel.Mode = 'multiple-document';
       shell.mode = 'single-document';
-      shell.restoreLayout(mode, state);
+      await shell.restoreLayout(mode, restorer);
       expect(shell.mode).toBe('multiple-document');
     });
   });
@@ -492,7 +502,7 @@ describe('LabShell', () => {
     });
 
     it('should throw an error when an unrecognized area is given', () => {
-      expect(() => shell.widgets('foo' as any)).toThrowError(/Invalid area/);
+      expect(() => shell.widgets('foo' as any)).toThrow(/Invalid area/);
     });
   });
 

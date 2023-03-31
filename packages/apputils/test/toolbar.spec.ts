@@ -4,26 +4,24 @@
 import {
   createToolbarFactory,
   SessionContext,
+  SessionContextDialogs,
   Toolbar,
   ToolbarRegistry,
   ToolbarWidgetRegistry
 } from '@jupyterlab/apputils';
 import { ISettingRegistry, SettingRegistry } from '@jupyterlab/settingregistry';
 import { IDataConnector } from '@jupyterlab/statedb';
-import {
-  createSessionContext,
-  framePromise,
-  JupyterServer
-} from '@jupyterlab/testutils';
+import { framePromise, JupyterServer } from '@jupyterlab/testing';
 import { ITranslator } from '@jupyterlab/translation';
 import { JSONExt, PromiseDelegate } from '@lumino/coreutils';
 import { Widget } from '@lumino/widgets';
+import { createSessionContext } from '@jupyterlab/apputils/lib/testutils';
 
 const server = new JupyterServer();
 
 beforeAll(async () => {
   await server.start();
-});
+}, 30000);
 
 afterAll(async () => {
   await server.shutdown();
@@ -55,7 +53,10 @@ describe('@jupyterlab/apputils', () => {
 
       describe('.createRestartButton()', () => {
         it("should add an inline svg node with the 'refresh' icon", async () => {
-          const button = Toolbar.createRestartButton(sessionContext);
+          const button = Toolbar.createRestartButton(
+            sessionContext,
+            new SessionContextDialogs()
+          );
           Widget.attach(button, document.body);
           await framePromise();
           expect(
@@ -66,7 +67,10 @@ describe('@jupyterlab/apputils', () => {
 
       describe('.createKernelNameItem()', () => {
         it("should display the `'display_name'` of the kernel", async () => {
-          const item = Toolbar.createKernelNameItem(sessionContext);
+          const item = Toolbar.createKernelNameItem(
+            sessionContext,
+            new SessionContextDialogs()
+          );
           await sessionContext.initialize();
           Widget.attach(item, document.body);
           await framePromise();
@@ -180,7 +184,7 @@ describe('@jupyterlab/apputils', () => {
         const widget = registry.createWidget('factory', documentWidget, item);
 
         expect(widget).toBe(dummyWidget);
-        expect(dummy).toBeCalledWith('factory', documentWidget, item);
+        expect(dummy).toHaveBeenCalledWith('factory', documentWidget, item);
       });
 
       it('should call the registered factory', () => {
@@ -201,8 +205,8 @@ describe('@jupyterlab/apputils', () => {
         const widget = registry.createWidget('factory', documentWidget, item);
 
         expect(widget).toBe(dummyWidget);
-        expect(dummy).toBeCalledWith(documentWidget);
-        expect(defaultFactory).toBeCalledTimes(0);
+        expect(dummy).toHaveBeenCalledWith(documentWidget);
+        expect(defaultFactory).toHaveBeenCalledTimes(0);
       });
     });
 
@@ -295,6 +299,7 @@ describe('@jupyterlab/apputils', () => {
       });
 
       const translator: ITranslator = {
+        languageCode: 'en',
         load: jest.fn()
       };
 
@@ -403,6 +408,7 @@ describe('@jupyterlab/apputils', () => {
       });
 
       const translator: ITranslator = {
+        languageCode: 'en',
         load: jest.fn()
       };
 
@@ -503,6 +509,7 @@ describe('@jupyterlab/apputils', () => {
       });
 
       const translator: ITranslator = {
+        languageCode: 'en',
         load: jest.fn()
       };
 

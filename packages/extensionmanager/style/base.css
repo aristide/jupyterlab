@@ -42,6 +42,19 @@
   min-height: 160px;
 }
 
+.jp-extensionmanager-disclaimer a {
+  color: var(--jp-content-link-color);
+}
+
+.jp-extensionmanager-disclaimer a:hover {
+  color: var(--jp-content-link-color);
+  text-decoration: underline;
+}
+
+.jp-extensionmanager-disclaimer .jp-Button {
+  margin: 0 5px;
+}
+
 /*
   List view layout and styling
 */
@@ -85,38 +98,34 @@
   List view pagination styling
 */
 
-.jp-extensionmanager-pagination {
+.jp-extensionmanager-view ul.pagination {
   display: flex;
   justify-content: center;
-  flex: 0 0 auto;
-}
-
-.jp-extensionmanager-view ul.pagination {
-  display: inline-block;
   padding-left: 0;
   padding-right: 0;
 }
 
-.jp-extensionmanager-view .pagination li {
+.jp-extensionmanager-pagination li {
   display: inline-block;
 }
 
-.jp-extensionmanager-view .pagination li a {
+/* stylelint-disable selector-max-type */
+.jp-extensionmanager-pagination li > a {
   padding: 0 5px;
-  margin: 0 5px;
+  cursor: pointer;
 }
+/* stylelint-enable selector-max-type */
 
-.jp-extensionmanager-view .pagination li.active a {
+.jp-extensionmanager-pagination li.active > a {
   background: var(--jp-brand-color1);
-  color: #fff;
+  color: var(--jp-layout-color1);
 }
 
-.jp-extensionmanager-view .pagination li a:hover {
+.jp-extensionmanager-pagination li > a:hover {
   background-color: var(--jp-layout-color2);
-  color: unset;
 }
 
-.jp-extensionmanager-view .pagination .break a {
+.jp-extensionmanager-pagination .break > a {
   cursor: default;
 }
 
@@ -146,6 +155,7 @@
   display: flex;
   flex-direction: row;
   justify-content: space-between;
+  align-items: center;
 }
 
 .jp-extensionmanager-entry.jp-extensionmanager-entry-should-be-uninstalled {
@@ -260,7 +270,7 @@
 */
 
 .jp-extensionmanager-disclaimer-disable {
-  background-color: var(--jp-brand-color1) !important;
+  background-color: var(--jp-reject-color-normal) !important;
   color: white !important;
   border: 0;
   background-image: none !important;
@@ -280,7 +290,8 @@
 .jp-extensionmanager-entry-buttons {
   display: flex;
   flex-direction: row;
-  padding-top: 4px;
+  padding-block-start: 4px;
+  justify-content: flex-end;
 }
 
 /*

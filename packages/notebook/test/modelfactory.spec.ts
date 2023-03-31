@@ -1,7 +1,7 @@
 // Copyright (c) Jupyter Development Team.
 // Distributed under the terms of the Modified BSD License.
 
-import { NotebookModel, NotebookModelFactory } from '../src';
+import { NotebookModel, NotebookModelFactory } from '@jupyterlab/notebook';
 
 describe('@jupyterlab/notebook', () => {
   describe('NotebookModelFactory', () => {
@@ -66,7 +66,7 @@ describe('@jupyterlab/notebook', () => {
 
       it('should accept a language preference', () => {
         const factory = new NotebookModelFactory({});
-        const model = factory.createNew('foo');
+        const model = factory.createNew({ languagePreference: 'foo' });
         expect(model.defaultKernelLanguage).toBe('foo');
       });
     });

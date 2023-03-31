@@ -131,7 +131,8 @@ export class NotebookPanel extends DocumentWidget<Notebook, INotebookModel> {
     const kernelPreference = this.context.sessionContext.kernelPreference;
     this.context.sessionContext.kernelPreference = {
       ...kernelPreference,
-      shutdownOnDispose: config.kernelShutdown
+      shutdownOnDispose: config.kernelShutdown,
+      autoStartDefault: config.autoStartDefault
     };
   }
 
@@ -226,7 +227,7 @@ export class NotebookPanel extends DocumentWidget<Notebook, INotebookModel> {
    * Update the kernel language.
    */
   private _updateLanguage(language: KernelMessage.ILanguageInfo): void {
-    this.model!.metadata.set('language_info', language);
+    this.model!.setMetadata('language_info', language);
   }
 
   /**
@@ -237,7 +238,7 @@ export class NotebookPanel extends DocumentWidget<Notebook, INotebookModel> {
     if (this.isDisposed) {
       return;
     }
-    this.model!.metadata.set('kernelspec', {
+    this.model!.setMetadata('kernelspec', {
       name: kernel.name,
       display_name: spec?.display_name,
       language: spec?.language
@@ -261,6 +262,10 @@ export namespace NotebookPanel {
    * Notebook config interface for NotebookPanel
    */
   export interface IConfig {
+    /**
+     * Whether to automatically start the preferred kernel
+     */
+    autoStartDefault: boolean;
     /**
      * A config object for cell editors
      */
@@ -299,11 +304,6 @@ export namespace NotebookPanel {
       return new Notebook(options);
     }
   }
-
-  /**
-   * Default content factory for the notebook panel.
-   */
-  export const defaultContentFactory: ContentFactory = new ContentFactory();
 
   /**
    * The notebook renderer token.

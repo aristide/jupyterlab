@@ -1,13 +1,15 @@
 ci:
+  # Same schedule interval as dependabot see .github/dependabot.yml
+  autoupdate_schedule: monthly
   # skip any check that needs internet access
-  skip: [check-jsonschema, prettier, eslint, stylelint, integrity]
+  skip: [prettier, eslint, stylelint]
 
 default_language_version:
   node: system
 
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v4.3.0
+    rev: v4.4.0
     hooks:
       - id: forbid-new-submodules
       - id: end-of-file-fixer
@@ -24,37 +26,21 @@ repos:
       - id: trailing-whitespace
         exclude: .bumpversion.cfg
 
+  - repo: https://github.com/python-jsonschema/check-jsonschema
+    rev: 0.22.0
+    hooks:
+      - id: check-github-workflows
+
   - repo: https://github.com/psf/black
-    rev: 22.10.0
+    rev: 23.1.0
     hooks:
       - id: black
-        args: ['--line-length', '100']
 
-  - repo: https://github.com/PyCQA/isort
-    rev: 5.10.1
+  - repo: https://github.com/charliermarsh/ruff-pre-commit
+    rev: v0.0.255
     hooks:
-      - id: isort
-        files: \.py$
-        args: [--profile=black]
-
-  - repo: https://github.com/pycqa/flake8
-    rev: 5.0.4
-    hooks:
-      - id: flake8
-        additional_dependencies:
-          [
-            'flake8-bugbear==22.6.22',
-            'flake8-implicit-str-concat==0.2.0'
-          ]
-
-  - repo: https://github.com/sirosen/check-jsonschema
-    rev: 0.18.3
-    hooks:
-      - id: check-jsonschema
-        name: 'Check GitHub Workflows'
-        files: ^\.github/workflows/
-        types: [yaml]
-        args: ['--schemafile', 'https://json.schemastore.org/github-workflow']
+      - id: ruff
+        args: ["--fix"]
 
   - repo: local
     hooks:
@@ -62,7 +48,7 @@ repos:
         name: prettier
         entry: 'npm run prettier:files'
         language: node
-        types_or: [json, markdown, ts, tsx, javascript, jsx, css]
+        types_or: [json, ts, tsx, javascript, jsx, css]
       - id: eslint
         name: eslint
         entry: 'npm run eslint:files'

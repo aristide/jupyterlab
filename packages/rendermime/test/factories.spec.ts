@@ -1,22 +1,20 @@
 // Copyright (c) Jupyter Development Team.
 // Distributed under the terms of the Modified BSD License.
 
-import { defaultSanitizer } from '@jupyterlab/apputils';
-import * as marked from '@jupyterlab/markedparser-extension';
-import { JSONObject, JSONValue } from '@lumino/coreutils';
-import { Widget } from '@lumino/widgets';
-import { IMarkdownParser } from '../lib';
+import { Sanitizer } from '@jupyterlab/apputils';
 import {
   htmlRendererFactory,
   imageRendererFactory,
+  IMarkdownParser,
   IRenderMime,
   latexRendererFactory,
   markdownRendererFactory,
   MimeModel,
   svgRendererFactory,
   textRendererFactory
-} from '../src';
-import * as fs from 'fs-extra';
+} from '@jupyterlab/rendermime';
+import { JSONObject, JSONValue } from '@lumino/coreutils';
+import { Widget } from '@lumino/widgets';
 
 function createModel(
   mimeType: string,
@@ -32,7 +30,7 @@ function encodeChars(txt: string): string {
   return txt.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-const sanitizer = defaultSanitizer;
+const sanitizer = new Sanitizer();
 const defaultOptions: any = {
   sanitizer,
   linkHandler: null,
@@ -174,6 +172,32 @@ describe('rendermime/factories', () => {
         );
       });
 
+      it('should not skip autolink', async () => {
+        const source = 'www.example.com';
+        const expected =
+          '<pre><a href="https://www.example.com" rel="noopener" target="_blank">www.example.com</a></pre>';
+        const f = textRendererFactory;
+        const mimeType = 'text/plain';
+        const model = createModel(mimeType, source);
+        sanitizer.setAutolink(true);
+        const w = f.createRenderer({ mimeType, ...defaultOptions });
+        await w.renderModel(model);
+        expect(w.node.innerHTML).toBe(expected);
+      });
+
+      it('should skip autolink', async () => {
+        const source = 'www.example.com';
+        const expected = '<pre>www.example.com</pre>';
+        const f = textRendererFactory;
+        const mimeType = 'text/plain';
+        const model = createModel(mimeType, source);
+        sanitizer.setAutolink(false);
+        const w = f.createRenderer({ mimeType, ...defaultOptions });
+        await w.renderModel(model);
+        expect(w.node.innerHTML).toBe(expected);
+        sanitizer.setAutolink(true);
+      });
+
       it('should autolink multiple URLs', async () => {
         const source = 'www.example.com\nwww.python.org';
         const expected =
@@ -271,9 +295,9 @@ describe('rendermime/factories', () => {
       let markdownParser: IMarkdownParser;
 
       beforeAll(() => {
-        markdownParser = marked.default.activate(
-          jest.fn() as any
-        ) as IMarkdownParser;
+        markdownParser = {
+          render: (content: string): Promise<string> => Promise.resolve(content)
+        };
       });
 
       it('should set the inner html with no parser', async () => {
@@ -318,16 +342,13 @@ describe('rendermime/factories', () => {
       it('should add header anchors', async () => {
         const f = markdownRendererFactory;
         const mimeType = 'text/markdown';
-        const sampleData = fs.readFileSync(
-          '../../examples/filebrowser/sample.md',
-          { encoding: 'utf-8' }
-        );
+        const sampleData = '### Title third level';
 
         const model = createModel(mimeType, sampleData);
         const w = f.createRenderer({
           mimeType,
           ...defaultOptions,
-          markdownParser
+          markdownParser: { render: content => '<h3>Title third level</h3>' }
         });
         await w.renderModel(model);
         Widget.attach(w, document.body);

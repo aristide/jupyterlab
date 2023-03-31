@@ -10,19 +10,24 @@ import {
   MarkdownCell
 } from '@jupyterlab/cells';
 import { CodeMirrorEditor } from '@jupyterlab/codemirror';
+import { CodeEditor } from '@jupyterlab/codeeditor';
+import { IChangedArgs } from '@jupyterlab/coreutils';
 import {
   IFilter,
   IFilters,
+  IReplaceOptions,
+  IReplaceOptionsSupport,
   ISearchMatch,
   ISearchProvider,
   SearchProvider
 } from '@jupyterlab/documentsearch';
-import { IObservableList } from '@jupyterlab/observables';
+import { IObservableList, IObservableMap } from '@jupyterlab/observables';
 import { ITranslator, nullTranslator } from '@jupyterlab/translation';
 import { ArrayExt } from '@lumino/algorithm';
 import { Widget } from '@lumino/widgets';
 import { CellList } from './celllist';
 import { NotebookPanel } from './panel';
+import { Notebook } from './widget';
 
 /**
  * Notebook document search provider
@@ -45,6 +50,33 @@ export class NotebookSearchProvider extends SearchProvider<NotebookPanel> {
       this._onActiveCellChanged,
       this
     );
+    this.widget.content.selectionChanged.connect(
+      this._onCellSelectionChanged,
+      this
+    );
+    this.widget.content.stateChanged.connect(
+      this._onNotebookStateChanged,
+      this
+    );
+    this._observeActiveCell();
+    this._filtersChanged.connect(this._setEnginesSelectionSearchMode, this);
+  }
+
+  private _onNotebookStateChanged(_: Notebook, args: IChangedArgs<any>) {
+    if (args.name === 'mode') {
+      // Delay the update to ensure that `document.activeElement` settled.
+      window.setTimeout(() => {
+        if (
+          args.newValue === 'command' &&
+          document.activeElement?.closest('.jp-DocumentSearch-overlay')
+        ) {
+          // Do not request updating mode when user switched focus to search overlay.
+          return;
+        }
+        this._updateSelectionMode();
+        this._filtersChanged.emit();
+      }, 0);
+    }
   }
 
   /**
@@ -86,8 +118,11 @@ export class NotebookSearchProvider extends SearchProvider<NotebookPanel> {
     let found = false;
     for (let idx = 0; idx < this._searchProviders.length; idx++) {
       const provider = this._searchProviders[idx];
-      const localMatch = provider.currentMatchIndex;
-      if (localMatch !== null) {
+      if (this._currentProviderIndex == idx) {
+        const localMatch = provider.currentMatchIndex;
+        if (localMatch === null) {
+          return null;
+        }
         agg += localMatch;
         found = true;
         break;
@@ -110,11 +145,20 @@ export class NotebookSearchProvider extends SearchProvider<NotebookPanel> {
 
   /**
    * Set to true if the widget under search is read-only, false
-   * if it is editable.  Will be used to determine whether to show
+   * if it is editable. Will be used to determine whether to show
    * the replace option.
    */
   get isReadOnly(): boolean {
     return this.widget?.content.model?.readOnly ?? false;
+  }
+
+  /**
+   * Support for options adjusting replacement behavior.
+   */
+  get replaceOptionsSupport(): IReplaceOptionsSupport {
+    return {
+      preserveCase: true
+    };
   }
 
   /**
@@ -137,7 +181,18 @@ export class NotebookSearchProvider extends SearchProvider<NotebookPanel> {
       this._onActiveCellChanged,
       this
     );
+
     this.widget.model?.cells.changed.disconnect(this._onCellsChanged, this);
+
+    this.widget.content.stateChanged.disconnect(
+      this._onNotebookStateChanged,
+      this
+    );
+    this.widget.content.selectionChanged.disconnect(
+      this._onCellSelectionChanged,
+      this
+    );
+    this._stopObservingLastCell();
 
     super.dispose();
 
@@ -168,13 +223,44 @@ export class NotebookSearchProvider extends SearchProvider<NotebookPanel> {
         default: false,
         supportReplace: false
       },
-      selectedCells: {
-        title: trans.__('Search Selected Cell(s)'),
-        description: trans.__('Search only in the selected cell(s).'),
+      selection: {
+        title:
+          this._selectionSearchMode === 'cells'
+            ? trans._n(
+                'Search in %1 Selected Cell',
+                'Search in %1 Selected Cells',
+                this._selectedCells
+              )
+            : trans._n(
+                'Search in %1 Selected Line',
+                'Search in %1 Selected Lines',
+                this._selectedLines
+              ),
+        description: trans.__(
+          'Search only in the selected cells or text (depending on edit/command mode).'
+        ),
         default: false,
         supportReplace: true
       }
     };
+  }
+
+  /**
+   * Update the search in selection mode; it should only be called when user
+   * navigates the notebook (enters editing/command mode, changes selection)
+   * but not when the searchbox gets focused (switching the notebook to command
+   * mode) nor when search highlights a match (switching notebook to edit mode).
+   */
+  private _updateSelectionMode() {
+    if (this._selectionLock) {
+      return;
+    }
+    this._selectionSearchMode =
+      this._selectedCells === 1 &&
+      this.widget.content.mode === 'edit' &&
+      this._selectedLines !== 0
+        ? 'text'
+        : 'cells';
   }
 
   /**
@@ -186,22 +272,29 @@ export class NotebookSearchProvider extends SearchProvider<NotebookPanel> {
   getInitialQuery(): string {
     const activeCell = this.widget.content.activeCell;
     const editor = activeCell?.editor as CodeMirrorEditor | undefined;
-    const selection = editor?.state.sliceDoc(
-      editor?.state.selection.main.from,
-      editor?.state.selection.main.to
+    if (!editor) {
+      return '';
+    }
+    const selection = editor.state.sliceDoc(
+      editor.state.selection.main.from,
+      editor.state.selection.main.to
     );
-    // if there are newlines, just return empty string
-    return selection?.search(/\r?\n|\r/g) === -1 ? selection : '';
+    return selection;
   }
 
   /**
    * Clear currently highlighted match.
    */
   async clearHighlight(): Promise<void> {
-    if (this._currentProviderIndex !== null) {
+    this._selectionLock = true;
+    if (
+      this._currentProviderIndex !== null &&
+      this._currentProviderIndex < this._searchProviders.length
+    ) {
       await this._searchProviders[this._currentProviderIndex].clearHighlight();
       this._currentProviderIndex = null;
     }
+    this._selectionLock = false;
   }
 
   /**
@@ -211,8 +304,11 @@ export class NotebookSearchProvider extends SearchProvider<NotebookPanel> {
    *
    * @returns The next match if available.
    */
-  async highlightNext(loop: boolean = true): Promise<ISearchMatch | undefined> {
-    const match = await this._stepNext(false, loop);
+  async highlightNext(
+    loop: boolean = true,
+    fromCursor = false
+  ): Promise<ISearchMatch | undefined> {
+    const match = await this._stepNext(false, loop, fromCursor);
     return match ?? undefined;
   }
 
@@ -250,43 +346,48 @@ export class NotebookSearchProvider extends SearchProvider<NotebookPanel> {
     this._query = query;
     this._filters = {
       output: false,
-      selectedCells: false,
+      selection: false,
       ...(filters ?? {})
     };
 
-    this._onSelectedCells = this._filters.selectedCells;
-    if (this._filters.selectedCells) {
-      this.widget.content.selectionChanged.connect(
-        this._onSelectionChanged,
-        this
-      );
-    }
+    this._onSelection = this._filters.selection;
+
+    const currentProviderIndex = this.widget.content.activeCellIndex;
 
     // For each cell, create a search provider
     this._searchProviders = await Promise.all(
-      cells.map(async cell => {
+      cells.map(async (cell, index) => {
         const cellSearchProvider = createCellSearchProvider(cell);
-        cellSearchProvider.stateChanged.connect(
-          this._onSearchProviderChanged,
-          this
-        );
 
         await cellSearchProvider.setIsActive(
-          !this._filters!.selectedCells ||
+          !this._filters!.selection ||
             this.widget.content.isSelectedOrActive(cell)
         );
+
+        if (
+          this._onSelection &&
+          this._selectionSearchMode === 'text' &&
+          index === currentProviderIndex
+        ) {
+          if (this._textSelection) {
+            await cellSearchProvider.setSearchSelection(this._textSelection);
+          }
+        }
+
         await cellSearchProvider.startQuery(query, this._filters);
 
         return cellSearchProvider;
       })
     );
+    this._currentProviderIndex = currentProviderIndex;
 
-    this._currentProviderIndex = this.widget.content.activeCellIndex;
-
-    if (!this._documentHasChanged) {
-      await this.highlightNext(false);
-    }
-    this._documentHasChanged = false;
+    // If we are searching in selection we do not want to show the first
+    // "current" closest to cursor as depending on which way the user
+    // dragged the selection it would be the first or last match.
+    const firstMatchAfterCursor = !(
+      this._onSelection && this._selectionSearchMode === 'text'
+    );
+    await this.highlightNext(false, firstMatchAfterCursor);
 
     return Promise.resolve();
   }
@@ -297,8 +398,6 @@ export class NotebookSearchProvider extends SearchProvider<NotebookPanel> {
   async endQuery(): Promise<void> {
     await Promise.all(
       this._searchProviders.map(provider => {
-        provider.stateChanged.disconnect(this._onSearchProviderChanged, this);
-
         return provider.endQuery().then(() => {
           provider.dispose();
         });
@@ -317,7 +416,11 @@ export class NotebookSearchProvider extends SearchProvider<NotebookPanel> {
    *
    * @returns A promise that resolves with a boolean indicating whether a replace occurred.
    */
-  async replaceCurrentMatch(newText: string, loop = true): Promise<boolean> {
+  async replaceCurrentMatch(
+    newText: string,
+    loop = true,
+    options?: IReplaceOptions
+  ): Promise<boolean> {
     let replaceOccurred = false;
 
     const unrenderMarkdownCell = async (
@@ -340,10 +443,18 @@ export class NotebookSearchProvider extends SearchProvider<NotebookPanel> {
       await unrenderMarkdownCell();
 
       const searchEngine = this._searchProviders[this._currentProviderIndex];
-      replaceOccurred = await searchEngine.replaceCurrentMatch(newText);
+      replaceOccurred = await searchEngine.replaceCurrentMatch(
+        newText,
+        false,
+        options
+      );
+      if (searchEngine.currentMatchIndex === null) {
+        // switch to next cell
+        await this.highlightNext(loop);
+      }
     }
 
-    await this.highlightNext(loop);
+    // TODO: markdown undrendering/highlighting sequence is likely incorrect
     // Force highlighting the first hit in the unrendered cell
     await unrenderMarkdownCell(true);
     return replaceOccurred;
@@ -356,10 +467,13 @@ export class NotebookSearchProvider extends SearchProvider<NotebookPanel> {
    *
    * @returns A promise that resolves with a boolean indicating whether a replace occurred.
    */
-  async replaceAllMatches(newText: string): Promise<boolean> {
+  async replaceAllMatches(
+    newText: string,
+    options?: IReplaceOptions
+  ): Promise<boolean> {
     const replacementOccurred = await Promise.all(
       this._searchProviders.map(provider => {
-        return provider.replaceAllMatches(newText);
+        return provider.replaceAllMatches(newText, options);
       })
     );
     return replacementOccurred.includes(true);
@@ -407,16 +521,12 @@ export class NotebookSearchProvider extends SearchProvider<NotebookPanel> {
   private _addCellProvider(index: number) {
     const cell = this.widget.content.widgets[index];
     const cellSearchProvider = createCellSearchProvider(cell);
-    cellSearchProvider.stateChanged.connect(
-      this._onSearchProviderChanged,
-      this
-    );
 
     ArrayExt.insert(this._searchProviders, index, cellSearchProvider);
 
     void cellSearchProvider
       .setIsActive(
-        !(this._filters?.selectedCells ?? false) ||
+        !(this._filters?.selection ?? false) ||
           this.widget.content.isSelectedOrActive(cell)
       )
       .then(() => {
@@ -426,7 +536,6 @@ export class NotebookSearchProvider extends SearchProvider<NotebookPanel> {
 
   private _removeCellProvider(index: number) {
     const provider = ArrayExt.removeAt(this._searchProviders, index);
-    provider?.stateChanged.disconnect(this._onSearchProviderChanged, this);
     provider?.dispose();
   }
 
@@ -434,8 +543,6 @@ export class NotebookSearchProvider extends SearchProvider<NotebookPanel> {
     cells: CellList,
     changes: IObservableList.IChangedArgs<ICellModel>
   ): Promise<void> {
-    await this.clearHighlight();
-
     switch (changes.type) {
       case 'add':
         changes.newValues.forEach((model, index) => {
@@ -462,16 +569,22 @@ export class NotebookSearchProvider extends SearchProvider<NotebookPanel> {
 
         break;
     }
-    this._onSearchProviderChanged();
   }
 
   private async _stepNext(
     reverse = false,
-    loop = false
+    loop = false,
+    fromCursor = false
   ): Promise<ISearchMatch | null> {
-    const activateNewMatch = async () => {
+    const activateNewMatch = async (match: ISearchMatch) => {
+      this._selectionLock = true;
       if (this.widget.content.activeCellIndex !== this._currentProviderIndex!) {
         this.widget.content.activeCellIndex = this._currentProviderIndex!;
+      }
+      if (this.widget.content.activeCellIndex === -1) {
+        console.warn('No active cell (no cells or no model), aborting search');
+        this._selectionLock = false;
+        return;
       }
       const activeCell = this.widget.content.activeCell!;
 
@@ -489,17 +602,35 @@ export class NotebookSearchProvider extends SearchProvider<NotebookPanel> {
       }
 
       if (!activeCell.inViewport) {
+        this._selectionLock = false;
         // It will not be possible the cell is not in the view
         return;
       }
 
       await activeCell.ready;
-      const editor = activeCell.editor! as CodeMirrorEditor;
-      editor.revealSelection(editor.getSelection());
+      const editor = activeCell.editor!;
+      editor.revealPosition(editor.getPositionAt(match.position)!);
+      this._selectionLock = false;
     };
 
     if (this._currentProviderIndex === null) {
       this._currentProviderIndex = this.widget.content.activeCellIndex;
+    }
+
+    // When going to previous match in cell mode and there is no current we
+    // want to skip the active cell and go to the previous cell; in edit mode
+    // the appropriate behaviour is induced by searching from nearest cursor.
+    if (reverse && this.widget.content.mode === 'command') {
+      const searchEngine = this._searchProviders[this._currentProviderIndex];
+      const currentMatch = searchEngine.getCurrentMatch();
+      if (!currentMatch) {
+        this._currentProviderIndex -= 1;
+      }
+      if (loop) {
+        this._currentProviderIndex =
+          (this._currentProviderIndex + this._searchProviders.length) %
+          this._searchProviders.length;
+      }
     }
 
     const startIndex = this._currentProviderIndex;
@@ -507,42 +638,38 @@ export class NotebookSearchProvider extends SearchProvider<NotebookPanel> {
       const searchEngine = this._searchProviders[this._currentProviderIndex];
 
       const match = reverse
-        ? await searchEngine.highlightPrevious()
-        : await searchEngine.highlightNext();
+        ? await searchEngine.highlightPrevious(false, fromCursor)
+        : await searchEngine.highlightNext(false, fromCursor);
 
       if (match) {
-        await activateNewMatch();
+        await activateNewMatch(match);
         return match;
       } else {
         this._currentProviderIndex =
           this._currentProviderIndex + (reverse ? -1 : 1);
 
         if (loop) {
-          // We loop on all cells, not hit found
-          if (this._currentProviderIndex === startIndex) {
-            break;
-          }
-
           this._currentProviderIndex =
             (this._currentProviderIndex + this._searchProviders.length) %
             this._searchProviders.length;
         }
       }
     } while (
-      0 <= this._currentProviderIndex &&
-      this._currentProviderIndex < this._searchProviders.length
+      loop
+        ? // We looped on all cells, no hit found
+          this._currentProviderIndex !== startIndex
+        : 0 <= this._currentProviderIndex &&
+          this._currentProviderIndex < this._searchProviders.length
     );
 
     if (loop) {
-      // Search a last time in the first provider as it may contain more
-      // than one matches
-      const searchEngine = this._searchProviders[this._currentProviderIndex];
+      // try the first provider again
+      const searchEngine = this._searchProviders[startIndex];
       const match = reverse
-        ? await searchEngine.highlightPrevious()
-        : await searchEngine.highlightNext();
-
+        ? await searchEngine.highlightPrevious(false, fromCursor)
+        : await searchEngine.highlightNext(false, fromCursor);
       if (match) {
-        await activateNewMatch();
+        await activateNewMatch(match);
         return match;
       }
     }
@@ -552,39 +679,125 @@ export class NotebookSearchProvider extends SearchProvider<NotebookPanel> {
   }
 
   private async _onActiveCellChanged() {
-    await this._onSelectionChanged();
+    await this._onCellSelectionChanged();
 
     if (this.widget.content.activeCellIndex !== this._currentProviderIndex) {
       await this.clearHighlight();
+      this._currentProviderIndex = this.widget.content.activeCellIndex;
     }
+    this._observeActiveCell();
   }
 
-  private _onSearchProviderChanged() {
-    // Don't highlight the next occurrence when the query
-    // follows a document change
-    this._documentHasChanged = true;
-    this._stateChanged.emit();
+  private _observeActiveCell() {
+    const editor = this.widget.content.activeCell?.editor;
+    if (!editor) {
+      return;
+    }
+    this._stopObservingLastCell();
+
+    editor.model.selections.changed.connect(this._setSelectedLines, this);
+    this._editorSelectionsObservable = editor.model.selections;
   }
 
-  private async _onSelectionChanged() {
-    if (this._onSelectedCells) {
-      const cells = this.widget.content.widgets;
-      await Promise.all(
-        this._searchProviders.map((provider, index) =>
-          provider.setIsActive(
-            this.widget.content.isSelectedOrActive(cells[index])
-          )
-        )
+  private _stopObservingLastCell() {
+    if (this._editorSelectionsObservable) {
+      this._editorSelectionsObservable.changed.disconnect(
+        this._setSelectedLines,
+        this
       );
-
-      this._onSearchProviderChanged();
     }
+  }
+
+  private _setSelectedLines() {
+    const editor = this.widget.content.activeCell?.editor;
+    if (!editor) {
+      return;
+    }
+
+    const selection = editor.getSelection();
+    const { start, end } = selection;
+
+    const newLines =
+      end.line === start.line && end.column === start.column
+        ? 0
+        : end.line - start.line + 1;
+
+    this._textSelection = selection;
+
+    if (newLines !== this._selectedLines) {
+      this._selectedLines = newLines;
+      this._updateSelectionMode();
+    }
+    this._filtersChanged.emit();
+  }
+
+  private _textSelection: CodeEditor.IRange | null = null;
+
+  /**
+   * Set whether the engines should search within selection only or full text.
+   */
+  private async _setEnginesSelectionSearchMode() {
+    let textMode: boolean;
+
+    if (!this._onSelection) {
+      // When search in selection is off we always search full text
+      textMode = false;
+    } else {
+      // When search in selection is off we either search in full cells
+      // (toggling off isActive flag on search enginges of non-selected cells)
+      // or in selected text of the active cell.
+      textMode = this._selectionSearchMode === 'text';
+    }
+
+    if (this._selectionLock) {
+      return;
+    }
+
+    // Clear old selection restrictions or if relevant, set current restrictions for active provider.
+    await Promise.all(
+      this._searchProviders.map((provider, index) => {
+        const isCurrent = this.widget.content.activeCellIndex === index;
+        return provider.setSearchSelection(
+          isCurrent && textMode ? this._textSelection : null
+        );
+      })
+    );
+  }
+
+  private async _onCellSelectionChanged() {
+    const cells = this.widget.content.widgets;
+    let selectedCells = 0;
+    await Promise.all(
+      cells.map(async (cell, index) => {
+        const provider = this._searchProviders[index];
+        const isSelected = this.widget.content.isSelectedOrActive(cell);
+        if (isSelected) {
+          selectedCells += 1;
+        }
+        if (provider && this._onSelection) {
+          await provider.setIsActive(isSelected);
+        }
+      })
+    );
+
+    if (selectedCells !== this._selectedCells) {
+      this._selectedCells = selectedCells;
+      this._updateSelectionMode();
+    }
+
+    this._filtersChanged.emit();
   }
 
   private _currentProviderIndex: number | null = null;
   private _filters: IFilters | undefined;
-  private _onSelectedCells = false;
+  private _onSelection = false;
+  private _selectedCells: number = 1;
+  private _selectedLines: number = 0;
   private _query: RegExp | null = null;
   private _searchProviders: CellSearchProvider[] = [];
-  private _documentHasChanged = false;
+  private _editorSelectionsObservable: IObservableMap<
+    CodeEditor.ITextSelection[]
+  > | null = null;
+  private _selectionSearchMode: 'cells' | 'text' = 'cells';
+  private _selectionLock: boolean = false;
 }

@@ -74,6 +74,10 @@ test.describe('Benchmark', () => {
     await content.uploadContent(loremIpsum, 'text', `${tmpPath}/${textFile}`);
   });
 
+  test.beforeEach(async ({ page }) => {
+    await galata.Mock.mockSettings(page, [], galata.DEFAULT_SETTINGS);
+  });
+
   // Remove benchmark files
   test.afterAll(async ({ request }) => {
     const content = galata.newContentsHelper(request);
@@ -136,7 +140,9 @@ test.describe('Benchmark', () => {
 
       // Shutdown the kernel to be sure it does not get in our way (especially for the close action)
       await page.click('li[role="menuitem"]:has-text("Kernel")');
-      await page.click('ul[role="menu"] >> text=Shut Down All Kernels…');
+      await page.click(
+        '.lm-Menu ul[role="menu"] >> text=Shut Down All Kernels…'
+      );
       await page.click('button:has-text("Shut Down All") >> nth=-1'); // Click on the last matched button.
 
       // Open text file
@@ -188,7 +194,7 @@ test.describe('Benchmark', () => {
       // Close notebook
       await page.click('li[role="menuitem"]:has-text("File")');
       const closeTime = await perf.measure(async () => {
-        await page.click('ul[role="menu"] >> text=Close Tab');
+        await page.click('.lm-Menu ul[role="menu"] >> text=Close Tab');
         // Revert changes so we don't measure saving
         const dimissButton = page.locator('button:has-text("Discard")');
         if (await dimissButton.isVisible({ timeout: 50 })) {

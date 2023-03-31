@@ -2,26 +2,26 @@
 // Distributed under the terms of the Modified BSD License.
 
 import { ISessionContext, SessionContext } from '@jupyterlab/apputils';
+import { createSessionContext } from '@jupyterlab/apputils/lib/testutils';
 import { CodeCell, MarkdownCell, RawCell } from '@jupyterlab/cells';
 import { CodeEditor } from '@jupyterlab/codeeditor';
 import { CellType, IMimeBundle } from '@jupyterlab/nbformat';
-import { IRenderMimeRegistry } from '@jupyterlab/rendermime';
-import { ISharedCodeCell } from '@jupyterlab/shared-models';
-import {
-  acceptDialog,
-  createSessionContext,
-  dismissDialog,
-  sleep
-} from '@jupyterlab/testutils';
-import { JupyterServer } from '@jupyterlab/testutils/lib/start_jupyter_server';
-import { JSONArray, JSONObject, UUID } from '@lumino/coreutils';
 import {
   KernelError,
   Notebook,
   NotebookActions,
   NotebookModel,
   StaticNotebook
-} from '..';
+} from '@jupyterlab/notebook';
+import { IRenderMimeRegistry } from '@jupyterlab/rendermime';
+import { ISharedCodeCell } from '@jupyter/ydoc';
+import {
+  acceptDialog,
+  dismissDialog,
+  JupyterServer,
+  sleep
+} from '@jupyterlab/testing';
+import { JSONArray, JSONObject, UUID } from '@lumino/coreutils';
 import * as utils from './utils';
 
 const ERROR_INPUT = 'a = foo';
@@ -31,9 +31,8 @@ const JUPYTER_CELL_MIME = 'application/vnd.jupyter.cells';
 const server = new JupyterServer();
 
 beforeAll(async () => {
-  jest.setTimeout(20000);
   await server.start();
-});
+}, 30000);
 
 afterAll(async () => {
   await server.shutdown();
@@ -48,7 +47,6 @@ describe('@jupyterlab/notebook', () => {
     let ipySessionContext: ISessionContext;
 
     beforeAll(async function () {
-      jest.setTimeout(20000);
       rendermime = utils.defaultRenderMime();
 
       async function createContext(options?: Partial<SessionContext.IOptions>) {
@@ -61,7 +59,7 @@ describe('@jupyterlab/notebook', () => {
         createContext(),
         createContext({ kernelPreference: { name: 'ipython' } })
       ]);
-    });
+    }, 30000);
 
     beforeEach(() => {
       widget = new Notebook({
@@ -73,9 +71,7 @@ describe('@jupyterlab/notebook', () => {
           windowingMode: 'none'
         }
       });
-      const model = new NotebookModel({
-        disableDocumentWideUndoRedo: true
-      });
+      const model = new NotebookModel();
       model.fromJSON(utils.DEFAULT_CONTENT);
       widget.model = model;
       model.sharedModel.clearUndoHistory();
@@ -693,7 +689,17 @@ describe('@jupyterlab/notebook', () => {
         NotebookActions.selectionExecuted.connect(() => {
           emitted += 1;
         });
-        const result = await NotebookActions.run(widget, undefined);
+        const result = await NotebookActions.run(
+          widget,
+          {
+            isTerminating: false,
+            pendingInput: false,
+            hasNoKernel: true,
+            kernelPreference: { autoStartDefault: false },
+            startKernel: () => Promise.resolve(true)
+          } as ISessionContext,
+          { selectKernel: () => Promise.resolve() } as any
+        );
         expect(result).toBe(true);
         const cell = widget.activeCell as CodeCell;
         expect(cell.model.executionCount).toBe(null);
@@ -1237,6 +1243,13 @@ describe('@jupyterlab/notebook', () => {
         expect(widget.activeCellIndex).toBe(0);
       });
 
+      it('should move the last cell up', () => {
+        const lastIndex = widget.model!.cells.length - 1;
+        widget.activeCellIndex = lastIndex;
+        NotebookActions.moveUp(widget);
+        expect(widget.activeCellIndex).toBe(lastIndex - 1);
+      });
+
       it('should be a no-op if there is no model', () => {
         widget.model = null;
         NotebookActions.moveUp(widget);
@@ -1315,7 +1328,7 @@ describe('@jupyterlab/notebook', () => {
       it('should delete metadata.deletable', () => {
         const next = widget.widgets[1];
         widget.select(next);
-        next.model.metadata.set('deletable', false);
+        next.model.setMetadata('deletable', false);
         NotebookActions.copy(widget);
         const data = utils.clipboard.getData(JUPYTER_CELL_MIME) as JSONArray;
         data.map(cell => {

@@ -12,6 +12,9 @@
       "path": "../codemirror"
     },
     {
+      "path": "../coreutils"
+    },
+    {
       "path": "../docregistry"
     },
     {
@@ -36,7 +39,7 @@
       "path": "."
     },
     {
-      "path": "../../testutils"
+      "path": "../testing"
     }
   ]
 }

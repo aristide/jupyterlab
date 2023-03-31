@@ -13,6 +13,10 @@ jobs:
     name: JS
     strategy:
       matrix:
+        # Fix for https://github.com/jupyterlab/jupyterlab/issues/13903
+        include:
+          - group: js-debugger
+            python-version: '3.11'
         group:
           [
             js-application,
@@ -21,14 +25,12 @@ jobs:
             js-cells,
             js-codeeditor,
             js-codemirror,
-            js-collaboration,
             js-completer,
             js-console,
             js-coreutils,
             js-csvviewer,
             js-debugger,
             js-docmanager,
-            js-docprovider,
             js-docregistry,
             js-documentsearch,
             js-filebrowser,
@@ -38,6 +40,8 @@ jobs:
             js-logconsole,
             js-lsp,
             js-mainmenu,
+            js-metadataform,
+            js-metapackage,
             js-nbformat,
             js-notebook,
             js-observables,
@@ -45,18 +49,18 @@ jobs:
             js-rendermime,
             js-services,
             js-settingregistry,
-            js-shared-models,
             js-statedb,
             js-statusbar,
+            js-testing,
             js-terminal,
             js-toc,
             js-translation,
             js-ui-components,
-            js-testutils,
+            js-vega5-extension,
           ]
       fail-fast: false
-    runs-on: ubuntu-20.04
-    timeout-minutes: 20
+    runs-on: ubuntu-22.04
+    timeout-minutes: 40
     steps:
       - name: Checkout
         uses: actions/checkout@v3
